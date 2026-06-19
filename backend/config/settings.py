@@ -47,6 +47,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
+    # Third-party Apps
+    'rest_framework',
+    'corsheaders',
+
     # EduPlus Apps
     'accounts',
     'students',
@@ -61,6 +65,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -141,3 +146,34 @@ STATIC_URL = 'static/'
 
 # Custom Authentication User Model
 AUTH_USER_MODEL = 'accounts.User'
+
+# REST Framework Configuration
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ]
+}
+
+# Subdomain Cookie Sharing & Security Configuration
+SESSION_COOKIE_DOMAIN = env('SESSION_COOKIE_DOMAIN', default=None)
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=False)
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+CSRF_COOKIE_DOMAIN = env('SESSION_COOKIE_DOMAIN', default=None)
+CSRF_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=False)
+CSRF_COOKIE_HTTPONLY = False  # Allows Axios frontend to read the CSRF token from cookie
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+
+# CORS Configuration
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
+
+# Google Integration Configuration
+GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
+GOOGLE_SHEET_ID = env('GOOGLE_SHEET_ID', default='')
+GOOGLE_SERVICE_ACCOUNT_EMAIL = env('GOOGLE_SERVICE_ACCOUNT_EMAIL', default='')
+GOOGLE_PRIVATE_KEY = env('GOOGLE_PRIVATE_KEY', default='')

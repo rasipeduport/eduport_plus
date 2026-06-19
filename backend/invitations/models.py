@@ -7,6 +7,7 @@ class InvitationRoleChoices(models.TextChoices):
     STUDENT = 'STUDENT', 'Student'
     MENTOR = 'MENTOR', 'Mentor'
     TUTOR = 'TUTOR', 'Tutor'
+    ADMIN = 'ADMIN', 'Admin'
 
 class InvitationStatusChoices(models.TextChoices):
     PENDING = 'PENDING', 'Pending'
