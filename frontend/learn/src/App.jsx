@@ -1,22 +1,63 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { GraduationCap, Compass, Presentation, ExternalLink, RefreshCw, LogOut, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
+import { LogOut, Loader2, ShieldAlert, RefreshCw, ArrowRight } from 'lucide-react';
 import api from './lib/api';
+
+// UI and layout imports
+import { Card } from './components/ui/card';
+import { Button } from './components/ui/button';
+import { AppShell } from './components/student/app-shell';
+import { StudentContext, useStudent } from './components/student/student-context';
+
+// Page-specific section imports
+import { WelcomeSection } from './components/home/welcome-section';
+import { ClassesSection } from './components/home/classes-section';
+import { LiveClassCard } from './components/home/live-class-card';
+import { LastClassCard } from './components/home/last-class-card';
+import { SessionsList } from './components/sessions/sessions-list';
+import { LibraryTabs } from './components/library/library-tabs';
+import { ProfileHeader } from './components/profile/profile-header';
+import { StudentInfoCard } from './components/profile/student-info-card';
+import { MentorCard } from './components/profile/mentor-card';
 
 // Configurable Hub URL for redirecting staff roles
 const HUB_URL = import.meta.env.VITE_HUB_URL || 'http://localhost:3000';
 
-// Simple Auth Context
+// Global flag to track Google Sign-In initialization
+let learnGsiInitialized = false;
+
+// Student State Provider Component
+function StudentProvider({ children, user, studentProfile, stats, reloadStats, logout }) {
+  const value = useMemo(() => ({
+    user,
+    selectedStudent: studentProfile,
+    profileEmail: user?.email,
+    dashboardStats: stats,
+    reloadStats,
+    logout
+  }), [user, studentProfile, stats, reloadStats, logout]);
+
+  return (
+    <StudentContext.Provider value={value}>
+      {children}
+    </StudentContext.Provider>
+  );
+}
+
+// Authentication Guard / Provider
 function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [studentProfile, setStudentProfile] = useState(null);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const fetchUser = async () => {
+  const fetchUserAndStats = async () => {
     try {
-      const response = await api.get('/api/auth/me/');
-      const userData = response.data.user;
+      // 1. Fetch current user from session /me/
+      const meResponse = await api.get('/api/auth/me/');
+      const userData = meResponse.data.user;
       setUser(userData);
       
       // If staff logs into Learn, redirect them to the Hub portal
@@ -25,10 +66,15 @@ function AuthProvider({ children }) {
         return;
       }
 
-      // Check student profile linking status
+      const profileData = meResponse.data.student_profile;
+      setStudentProfile(profileData);
+
+      // 2. Fetch student dashboard stats
       try {
-        await api.get('/api/student/dashboard/');
-        // Linked successfully
+        const statsResponse = await api.get('/api/student/dashboard/');
+        setStats(statsResponse.data);
+
+        // Redirect if in waiting room or login but verified
         if (location.pathname === '/waiting-room' || location.pathname === '/login') {
           navigate('/dashboard');
         }
@@ -37,10 +83,14 @@ function AuthProvider({ children }) {
           if (location.pathname !== '/waiting-room') {
             navigate('/waiting-room');
           }
+        } else {
+          console.error('Failed to load dashboard stats', err);
         }
       }
     } catch (error) {
       setUser(null);
+      setStudentProfile(null);
+      setStats(null);
       if (location.pathname !== '/login') {
         navigate('/login');
       }
@@ -49,14 +99,25 @@ function AuthProvider({ children }) {
     }
   };
 
+  const reloadStats = async () => {
+    try {
+      const statsResponse = await api.get('/api/student/dashboard/');
+      setStats(statsResponse.data);
+    } catch (err) {
+      console.error('Failed to reload dashboard stats', err);
+    }
+  };
+
   useEffect(() => {
-    fetchUser();
+    fetchUserAndStats();
   }, [location.pathname]);
 
   const logout = async () => {
     try {
       await api.post('/api/auth/logout/');
       setUser(null);
+      setStudentProfile(null);
+      setStats(null);
       navigate('/login');
     } catch (error) {
       console.error('Logout failed:', error);
@@ -65,65 +126,19 @@ function AuthProvider({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-black">
+      <div className="min-h-screen flex items-center justify-center bg-surface">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-indigo-500 mx-auto mb-4" />
-          <p className="text-zinc-400 font-medium">Loading Eduport Plus...</p>
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
+          <p className="text-text-secondary font-medium">Loading Eduport Plus...</p>
         </div>
       </div>
     );
   }
 
-  return children({ user, logout });
+  return children({ user, studentProfile, stats, reloadStats, logout });
 }
 
-// Header & Layout Component
-function HeaderLayout({ user, logout, children }) {
-  return (
-    <div className="min-h-screen flex flex-col bg-[#09090b] text-zinc-100">
-      <header className="h-16 bg-[#0a0a0c] border-b border-[#1e1e24] flex items-center justify-between px-8 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 flex items-center justify-center border border-indigo-500/20 shadow-sm shrink-0">
-            <img src="/icon-transparent.png" alt="E+" className="w-5 h-5 object-contain" />
-          </div>
-          <div>
-            <h1 className="font-bold text-sm leading-tight text-white m-0">Eduport Plus</h1>
-            <span className="text-[10px] uppercase font-semibold tracking-wider text-indigo-400">Learn</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            {user?.avatar_url ? (
-              <img src={user.avatar_url} alt="avatar" className="w-8 h-8 rounded-full bg-zinc-800 object-cover border border-[#27272a]" />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-semibold text-white">
-                {user?.full_name?.charAt(0) || 'S'}
-              </div>
-            )}
-            <p className="text-sm font-semibold text-slate-200 hidden md:block m-0">{user?.full_name}</p>
-          </div>
-          <button
-            onClick={logout}
-            className="text-zinc-400 hover:text-white transition-colors"
-            title="Log Out"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-8 overflow-y-auto">
-        {children}
-      </main>
-    </div>
-  );
-}
-
-// Global flag to track Google Sign-In initialization
-let learnGsiInitialized = false;
-
-// Login Component (Premium Dark Theme Center Card)
+// ─── LOGIN COMPONENT ───
 function Login() {
   const [error, setError] = useState('');
   const [accessRestricted, setAccessRestricted] = useState(false);
@@ -139,7 +154,7 @@ function Login() {
       const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
       
       if (!learnGsiInitialized) {
-        window.google.accounts.id.initialize({
+        window.google?.accounts.id.initialize({
           client_id: clientId,
           callback: handleGoogleCredentialResponse,
         });
@@ -148,7 +163,7 @@ function Login() {
 
       const btnEl = document.getElementById('google-signin-btn');
       if (btnEl) {
-        window.google.accounts.id.renderButton(
+        window.google?.accounts.id.renderButton(
           btnEl,
           { 
             theme: 'filled_black', 
@@ -160,7 +175,7 @@ function Login() {
           }
         );
       }
-      window.google.accounts.id.prompt(); // Trigger Google One Tap
+      window.google?.accounts.id.prompt(); // Trigger Google One Tap
     }
   }, [gsiLoaded, accessRestricted]);
 
@@ -257,24 +272,22 @@ function Login() {
 
   if (accessRestricted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
-        <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-red-950/30 border border-red-800/30 flex items-center justify-center text-red-500 mb-6">
+      <div className="min-h-screen flex items-center justify-center bg-surface px-4 font-sans text-text-primary">
+        <div className="w-full max-w-[400px] bg-surface-elevated border border-border-light rounded-2xl p-8 shadow-2xl flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-danger-subtle border border-danger/15 flex items-center justify-center text-danger mb-6">
             <ShieldAlert className="w-8 h-8" />
           </div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Access Restricted</h2>
-          
-          <div className="text-zinc-400 mt-4 text-sm leading-relaxed space-y-4">
+          <h2 className="text-2xl font-bold tracking-tight">Access Restricted</h2>
+          <div className="text-text-secondary mt-4 text-sm leading-relaxed space-y-4">
             <p>Your email is not authorized to access EduPlus.</p>
             <p>Please contact your administrator for access.</p>
           </div>
-          
           <button
             onClick={() => {
               setAccessRestricted(false);
               setError('');
             }}
-            className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-semibold transition-colors mt-8"
+            className="w-full h-11 bg-primary text-white hover:bg-primary-hover rounded-lg text-sm font-semibold transition-colors mt-8 cursor-pointer"
           >
             Try Another Account
           </button>
@@ -284,297 +297,418 @@ function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
-      <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
-        <div className="text-center mb-8 flex flex-col items-center">
-          <img src="/brand/logo.svg" alt="Eduport Plus" className="h-10 w-auto mb-4 object-contain" />
-          <h2 
-            className="text-2xl font-bold text-white tracking-tight cursor-pointer select-none" 
-            onDoubleClick={() => setShowMock(prev => !prev)}
-            title="Double-click to toggle Developer Mock Access"
-          >
-            Welcome!
-          </h2>
-          <p className="text-zinc-400 mt-2 text-sm leading-normal">Sign in to your account to continue</p>
-        </div>
+    <main className="bg-surface flex min-h-dvh flex-col">
+      {/* Brand top accent */}
+      <div className="from-primary to-accent h-1.5 bg-gradient-to-r" />
 
-        {error && (
-          <div className="w-full bg-red-950/50 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50 whitespace-pre-line">
-            {error}
+      <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
+        <div className="w-full max-w-sm">
+          {/* Branding */}
+          <div className="mb-8 text-center">
+            <img
+              src="/brand/logo.svg"
+              alt="Eduport Plus"
+              className="mx-auto mb-6 h-12 w-auto cursor-pointer"
+              onDoubleClick={() => setShowMock(prev => !prev)}
+              title="Double-click to toggle Developer Mock Access"
+            />
+            <h1 className="text-text-primary text-2xl font-bold md:text-3xl">
+              Welcome Back
+            </h1>
+            <p className="text-text-secondary mt-2 text-sm">
+              Continue your learning journey with Eduport Plus.
+            </p>
           </div>
-        )}
 
-        <div className="w-full space-y-6 flex flex-col items-center">
-          <div 
-            id="google-signin-btn" 
-            className="w-full flex justify-center"
-            style={{ display: gsiLoaded ? 'flex' : 'none' }}
-          ></div>
-          {!gsiLoaded && (
-            /* Custom Google Pill button Fallback */
-            <button
-              onClick={handleGoogleSignInFallback}
-              className="w-full flex items-center justify-center gap-3 bg-white text-zinc-950 font-semibold h-11 px-4 rounded-xl border border-zinc-200 hover:bg-zinc-100 transition-colors duration-150 text-sm shadow-sm"
-            >
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#EA4335"
-                  d="M5.266 9.765A7.077 7.077 0 0 1 12 4.909c1.69 0 3.218.6 4.418 1.582l3.51-3.51C17.745 1.055 15.045 0 12 0 7.354 0 3.373 2.668 1.445 6.555L5.266 9.765z"
-                />
-                <path
-                  fill="#4285F4"
-                  d="M23.49 12.275c0-.818-.073-1.609-.209-2.373H12v4.5h6.49c-.282 1.482-1.12 2.74-2.38 3.59l3.7 2.87c2.164-1.99 3.68-4.927 3.68-8.587z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.266 14.235L1.445 17.44A11.97 11.97 0 0 0 12 24c3.055 0 5.864-1.01 7.91-2.74l-3.7-2.87c-1.145.764-2.618 1.218-4.21 1.218-3.136 0-5.8-2.127-6.734-5.373z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M1.445 6.555A11.996 11.996 0 0 0 0 12c0 1.99.49 3.864 1.445 5.445l3.821-3.205C4.945 13.127 4.909 12.573 4.909 12c0-.573.036-1.127.127-1.682L1.445 6.555z"
-                />
-              </svg>
-              Continue with Google
-            </button>
+          {error && (
+            <div className="w-full bg-danger-subtle text-danger text-xs p-3 rounded-lg mb-6 border border-danger/15 whitespace-pre-line">
+              {error}
+            </div>
           )}
 
-          {showMock && (
-            <div className="w-full space-y-6">
-              <div className="w-full relative flex items-center justify-center py-1">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-[#1e1e24]"></div>
-                </div>
-                <span className="relative px-3 bg-[#121214] text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                  Student Mock Login
-                </span>
-              </div>
-
-              <form onSubmit={handleMockLogin} className="w-full space-y-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5">Whitelisted Email</label>
-                  <input
-                    type="email"
-                    value={mockEmail}
-                    onChange={(e) => setMockEmail(e.target.value)}
-                    placeholder="student.jane@gmail.com"
-                    className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5">Name</label>
-                  <input
-                    type="text"
-                    value={mockName}
-                    onChange={(e) => setMockName(e.target.value)}
-                    placeholder="Jane Student"
-                    className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                  />
-                </div>
+          <Card variant="elevated" padding="lg">
+            <p className="text-text-primary text-base font-semibold">
+              Student Sign In
+            </p>
+            <p className="text-text-secondary mt-1 mb-6 text-sm">
+              Access your classes, profile, and progress in one place.
+            </p>
+            
+            <div className="w-full space-y-6 flex flex-col items-center">
+              <div 
+                id="google-signin-btn" 
+                className="w-full flex justify-center"
+                style={{ display: gsiLoaded ? 'flex' : 'none' }}
+              ></div>
+              {!gsiLoaded && (
                 <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full h-11 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 shadow-md transition-colors flex items-center justify-center gap-2"
+                  onClick={handleGoogleSignInFallback}
+                  className="w-full flex items-center justify-center gap-3 bg-white text-zinc-950 font-semibold h-11 px-4 rounded-xl border border-zinc-200 hover:bg-zinc-100 transition-colors duration-150 text-sm shadow-sm cursor-pointer"
                 >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      Log In as Student
-                      <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
+                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M5.266 9.765A7.077 7.077 0 0 1 12 4.909c1.69 0 3.218.6 4.418 1.582l3.51-3.51C17.745 1.055 15.045 0 12 0 7.354 0 3.373 2.668 1.445 6.555L5.266 9.765z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M23.49 12.275c0-.818-.073-1.609-.209-2.373H12v4.5h6.49c-.282 1.482-1.12 2.74-2.38 3.59l3.7 2.87c2.164-1.99 3.68-4.927 3.68-8.587z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.266 14.235L1.445 17.44A11.97 11.97 0 0 0 12 24c3.055 0 5.864-1.01 7.91-2.74l-3.7-2.87c-1.145.764-2.618 1.218-4.21 1.218-3.136 0-5.8-2.127-6.734-5.373z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M1.445 6.555A11.996 11.996 0 0 0 0 12c0 1.99.49 3.864 1.445 5.445l3.821-3.205C4.945 13.127 4.909 12.573 4.909 12c0-.573.036-1.127.127-1.682L1.445 6.555z"
+                    />
+                  </svg>
+                  Continue with Google
                 </button>
-              </form>
+              )}
+
+              {showMock && (
+                <div className="w-full space-y-6">
+                  <div className="w-full relative flex items-center justify-center py-1">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-border"></div>
+                    </div>
+                    <span className="relative px-3 bg-surface-elevated text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                      Student Mock Login
+                    </span>
+                  </div>
+
+                  <form onSubmit={handleMockLogin} className="w-full space-y-4">
+                    <div className="text-left">
+                      <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-widest mb-1.5">Whitelisted Email</label>
+                      <input
+                        type="email"
+                        value={mockEmail}
+                        onChange={(e) => setMockEmail(e.target.value)}
+                        placeholder="student.dona@gmail.com"
+                        className="w-full px-4 h-11 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                        required
+                      />
+                    </div>
+                    <div className="text-left">
+                      <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-widest mb-1.5">Name</label>
+                      <input
+                        type="text"
+                        value={mockName}
+                        onChange={(e) => setMockName(e.target.value)}
+                        placeholder="Dona Student"
+                        className="w-full px-4 h-11 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full h-11 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary-hover shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {loading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          Log In as Student
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
-          )}
+          </Card>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 
-// Student Dashboard View
-function Dashboard() {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        const res = await api.get('/api/student/dashboard/');
-        setStats(res.data);
-      } catch (err) {
-        console.error('Failed to load student dashboard', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDashboard();
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-[#09090b]">
-        <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Welcome Header */}
-      <div className="bg-gradient-to-br from-indigo-700 to-indigo-900 rounded-2xl p-8 text-white relative overflow-hidden shadow-lg border border-indigo-950">
-        <div className="relative z-10">
-          <span className="text-indigo-200 text-xs font-bold uppercase tracking-widest block">Dashboard</span>
-          <h2 className="text-3xl font-extrabold text-white mt-1.5 m-0">Welcome back, {stats?.student_name}!</h2>
-          <p className="text-indigo-100 mt-2.5 text-sm max-w-md leading-relaxed">
-            Great to see you today. Here is an overview of your class status and assigned mentor contact.
-          </p>
-        </div>
-        <div className="absolute -top-10 -right-10 w-44 h-44 rounded-full bg-white/5 blur-xl"></div>
-        <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full bg-white/5 blur-xl"></div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Quota Indicator */}
-        <div className="bg-[#121214] border border-[#1e1e24] p-6 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-indigo-950/20 text-indigo-400 rounded-xl border border-indigo-900/50">
-              <GraduationCap className="w-5 h-5" />
-            </div>
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Class Credits</span>
-          </div>
-          <div className="mt-4">
-            <h3 className="text-4xl font-extrabold text-white m-0">{stats?.quota ?? 0}</h3>
-            <p className="text-xs text-zinc-500 mt-1 m-0">Remaining classes in your quota</p>
-          </div>
-        </div>
-
-        {/* Mentor Card */}
-        <div className="bg-[#121214] border border-[#1e1e24] p-6 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-sky-950/20 text-sky-400 rounded-xl border border-sky-900/50">
-              <Compass className="w-5 h-5" />
-            </div>
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Your Mentor</span>
-          </div>
-          <div className="mt-4">
-            <h3 className="text-lg font-bold text-white m-0">{stats?.mentor || 'Not Assigned'}</h3>
-            <p className="text-xs text-zinc-500 mt-1 m-0">Academic Guidance & Planning</p>
-          </div>
-        </div>
-
-        {/* Tutor Card */}
-        <div className="bg-[#121214] border border-[#1e1e24] p-6 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-emerald-950/20 text-emerald-400 rounded-xl border border-emerald-900/50">
-              <Presentation className="w-5 h-5" />
-            </div>
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Your Tutor</span>
-          </div>
-          <div className="mt-4">
-            <h3 className="text-lg font-bold text-white m-0">{stats?.tutor || 'Not Assigned'}</h3>
-            <p className="text-xs text-zinc-500 mt-1 m-0">One-on-One Live Instructor</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Google Meet Live Class Action */}
-      {stats?.meet_link && (
-        <div className="bg-[#121214] border border-[#1e1e24] rounded-2xl shadow-sm p-6 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-1">
-            <h3 className="text-lg font-bold text-white m-0">Join Your Live Class</h3>
-            <p className="text-sm text-zinc-500 m-0">Google Meet link is configured and open for your sessions.</p>
-          </div>
-          <a
-            href={stats.meet_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-6 h-12 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 shadow-md transition-colors w-full md:w-auto justify-center"
-          >
-            Enter Classroom
-            <ExternalLink className="w-4 h-4" />
-          </a>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Waiting Room Page (Premium Dark Centered Card)
-function WaitingRoom({ logout }) {
-  const [checking, setChecking] = useState(false);
+// ─── WAITING ROOM COMPONENT ───
+function WaitingRoom() {
+  const { logout } = useStudent();
   const navigate = useNavigate();
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = async () => {
-    setChecking(true);
+    setIsRefreshing(true);
     try {
       const response = await api.get('/api/auth/me/');
-      const userData = response.data.user;
-      
-      // Try fetching dashboard stats
+      // check if linked successfully
       await api.get('/api/student/dashboard/');
       navigate('/dashboard');
     } catch (err) {
       console.log('Linking pending...');
     } finally {
-      setTimeout(() => setChecking(false), 800);
+      setTimeout(() => setIsRefreshing(false), 1000);
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#070708] font-sans text-zinc-100">
-      <header className="h-16 bg-[#0a0a0c] border-b border-[#1e1e24] flex items-center justify-between px-8 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 flex items-center justify-center border border-indigo-500/20 shadow-sm shrink-0">
-            <img src="/icon-transparent.png" alt="E+" className="w-5 h-5 object-contain" />
+    <div className="bg-surface flex min-h-dvh flex-col text-text-primary">
+      {/* Header */}
+      <div className="from-primary to-primary-hover relative overflow-hidden bg-gradient-to-br px-6 pt-7 pb-6 md:px-7 md:pt-9 md:pb-8">
+        <div className="pointer-events-none absolute -top-20 -right-20 h-60 w-60 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-white/5 blur-2xl" />
+
+        <div className="relative mx-auto max-w-sm text-center">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
+            <img
+              src="/brand/icon.png"
+              alt="Eduport Plus"
+              className="w-7.5 h-7.5 object-contain"
+            />
           </div>
-          <h1 className="font-bold text-sm text-white m-0">Eduport Plus</h1>
-        </div>
-        <button onClick={logout} className="text-zinc-400 hover:text-white transition-colors" title="Log Out">
-          <LogOut className="w-5 h-5" />
-        </button>
-      </header>
-
-      <main className="flex-1 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md bg-[#121214] border border-[#1e1e24] rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
-          <img src="/brand/icon.png" alt="Eduport Plus" className="w-16 h-16 object-contain mb-6" />
-          <h2 className="text-2xl font-bold text-white m-0">Account Verification</h2>
-          <p className="text-zinc-400 text-sm mt-3 leading-relaxed">
-            We are setting up your student profile! Your account details are currently waiting to be linked with your student records.
+          <h1 className="text-2xl font-bold text-white md:text-3xl">
+            Account Verification
+          </h1>
+          <p className="mt-1.5 text-sm text-white/75 md:text-base">
+            Processing your profile setup
           </p>
+        </div>
+      </div>
 
-          <div className="bg-[#1a1a1e] border border-[#27272a] rounded-xl p-5 mt-6 text-left space-y-2">
-            <h4 className="text-sm font-bold text-white m-0">Need assistance?</h4>
-            <p className="text-xs text-zinc-400 leading-normal m-0">
-              Please contact your assigned <strong className="text-white">mentor</strong> to speed up this process. If you aren't sure who they are, reach out to our WhatsApp support team.
+      {/* Content area */}
+      <div className="mx-auto w-full max-w-sm flex-1 px-5 py-6 md:py-8 flex flex-col justify-between">
+        <div className="flex-1 space-y-4">
+          <div className="rounded-2xl border border-border-light bg-surface-elevated p-5 shadow-card">
+            <p className="text-text-primary text-sm leading-relaxed mb-4">
+              We're just getting your account ready! Your profile is currently waiting to be linked with your student records.
             </p>
-            <a
-              href="https://wa.me/971585982494?text=Hi! I am waiting to be verified on Eduport Plus."
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-indigo-400 font-semibold hover:underline block pt-1"
-            >
-              Contact Support via WhatsApp
-            </a>
+            <div className="rounded-xl bg-surface-muted p-4">
+              <h3 className="text-sm font-semibold text-text-primary mb-1">Need help?</h3>
+              <p className="text-text-secondary text-[13px] leading-relaxed">
+                Please contact your <span className="font-medium text-text-primary">mentor</span> to fast-track this process. If you aren't sure who your mentor is, feel free to reach out to our{' '}
+                <a 
+                  href="https://wa.me/971585982494?text=Hi%21%20I%27m%20waiting%20to%20be%20verified%20on%20Eduport%20Plus." 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline font-medium"
+                >
+                  support team
+                </a>.
+              </p>
+            </div>
           </div>
 
           <button
             onClick={handleRefresh}
-            disabled={checking}
-            className="w-full h-11 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 shadow-md transition-colors mt-8 flex items-center justify-center gap-2"
+            disabled={isRefreshing}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 h-11 text-sm font-semibold text-white shadow-sm hover:bg-primary-hover transition-colors disabled:opacity-70 cursor-pointer"
           >
-            <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
-            {checking ? 'Checking Status...' : 'Check Status'}
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Checking...' : 'Check Status'}
           </button>
         </div>
-      </main>
+
+        <div className="mt-8">
+          <button
+            onClick={logout}
+            className="border-border bg-surface-elevated text-text-secondary hover:bg-surface-muted hover:text-text-primary flex h-11 w-full items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition-colors duration-150 cursor-pointer"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign Out
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-// Router Entry App
+// ─── DASHBOARD / HOME PAGE VIEW ───
+function DashboardView() {
+  const { selectedStudent, dashboardStats } = useStudent();
+
+  if (!dashboardStats) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 md:space-y-6">
+      {/* Welcome Header */}
+      <WelcomeSection studentName={selectedStudent?.full_name} />
+
+      {/* Class Credits */}
+      <ClassesSection
+        totalClassQuota={selectedStudent?.total_class_quota || 0}
+        scheduledCount={dashboardStats.scheduled_count}
+        attendedCount={dashboardStats.attended_count}
+        loading={false}
+      />
+
+      {/* Live Class */}
+      <section>
+        <h2 className="text-text-primary text-base font-semibold">
+          Your Next Live Class
+        </h2>
+        <p className="text-text-secondary mt-1 mb-3 text-sm">
+          Join your scheduled one-on-one learning session.
+        </p>
+        <LiveClassCard
+          meetLink={selectedStudent?.meet_link}
+          nextSession={dashboardStats.next_session}
+          loading={false}
+        />
+      </section>
+
+      {/* Last Class Recap */}
+      {dashboardStats.last_session && (
+        <section>
+          <h2 className="text-text-primary text-base font-semibold">
+            Last Class Recap
+          </h2>
+          <p className="text-text-secondary mt-1 mb-3 text-sm">
+            Review resources and rate your previous session.
+          </p>
+          <LastClassCard session={dashboardStats.last_session} />
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── SESSIONS PAGE VIEW ───
+function SessionsPageView() {
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchSessions = async () => {
+    try {
+      const res = await api.get('/api/sessions/');
+      setSessions(res.data.sessions || []);
+    } catch (err) {
+      console.error('Failed to load sessions', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 md:space-y-6">
+      <section>
+        <h1 className="text-text-primary text-xl font-bold md:text-2xl">
+          Sessions
+        </h1>
+        <p className="text-text-secondary mt-1 text-sm">
+          Your 1-to-1 class sessions.
+        </p>
+      </section>
+
+      <SessionsList sessions={sessions} />
+    </div>
+  );
+}
+
+// ─── LIBRARY PAGE VIEW ───
+function LibraryPageView() {
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAttendedSessions = async () => {
+    try {
+      const res = await api.get('/api/sessions/');
+      // filter only completed/attended classes in frontend
+      const completed = (res.data.sessions || []).filter(s => s.status === 'attended');
+      setSessions(completed);
+    } catch (err) {
+      console.error('Failed to load library resources', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAttendedSessions();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 md:space-y-6">
+      <section>
+        <h1 className="text-text-primary text-xl font-bold md:text-2xl">
+          Library
+        </h1>
+        <p className="text-text-secondary mt-1 text-sm">
+          All your class materials in one place.
+        </p>
+      </section>
+
+      <LibraryTabs sessions={sessions} />
+    </div>
+  );
+}
+
+// ─── PROFILE PAGE VIEW ───
+function ProfilePageView() {
+  const { selectedStudent, user, dashboardStats, logout } = useStudent();
+
+  if (!selectedStudent) return null;
+
+  const info = {
+    mobile: selectedStudent.mobile_number || '\u2014',
+    email: user?.email || '\u2014',
+    school: selectedStudent.school_name || '\u2014',
+    region: [selectedStudent.state, selectedStudent.country].filter(Boolean).join(', ') || '\u2014'
+  };
+
+  return (
+    <div className="space-y-5 md:space-y-6">
+      {/* Profile Header with Initials Avatar */}
+      <ProfileHeader
+        name={selectedStudent.full_name}
+        grade={selectedStudent.grade || ''}
+        avatarUrl={null}
+      />
+
+      {/* Student Information Details Card */}
+      <StudentInfoCard info={info} />
+
+      {/* Assigned Mentor Card */}
+      <MentorCard 
+        mentorName={dashboardStats?.mentor} 
+        mentorEmail={dashboardStats?.mentor_email} 
+        mentorPhone={dashboardStats?.mentor_phone} 
+      />
+
+      {/* Log out actions */}
+      <div className="space-y-3 pb-4">
+        <button
+          onClick={logout}
+          className="border-border bg-surface-elevated text-text-secondary hover:bg-surface-muted hover:text-text-primary flex h-11 w-full items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition-colors duration-150 cursor-pointer"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── APP ROUTER ROUTING ENTRY ───
 export default function App() {
   return (
     <BrowserRouter>
@@ -584,12 +718,41 @@ export default function App() {
           path="/*"
           element={
             <AuthProvider>
-              {({ user, logout }) => (
-                <Routes>
-                  <Route path="/dashboard" element={<HeaderLayout user={user} logout={logout}><Dashboard /></HeaderLayout>} />
-                  <Route path="/waiting-room" element={<WaitingRoom logout={logout} />} />
-                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                </Routes>
+              {({ user, studentProfile, stats, reloadStats, logout }) => (
+                <StudentProvider
+                  user={user}
+                  studentProfile={studentProfile}
+                  stats={stats}
+                  reloadStats={reloadStats}
+                  logout={logout}
+                >
+                  <Routes>
+                    <Route 
+                      path="/dashboard" 
+                      element={<AppShell><DashboardView /></AppShell>} 
+                    />
+                    <Route 
+                      path="/sessions" 
+                      element={<AppShell><SessionsPageView /></AppShell>} 
+                    />
+                    <Route 
+                      path="/library" 
+                      element={<AppShell><LibraryPageView /></AppShell>} 
+                    />
+                    <Route 
+                      path="/profile" 
+                      element={<AppShell><ProfilePageView /></AppShell>} 
+                    />
+                    <Route 
+                      path="/waiting-room" 
+                      element={<WaitingRoom />} 
+                    />
+                    <Route 
+                      path="*" 
+                      element={<Navigate to="/dashboard" replace />} 
+                    />
+                  </Routes>
+                </StudentProvider>
               )}
             </AuthProvider>
           }

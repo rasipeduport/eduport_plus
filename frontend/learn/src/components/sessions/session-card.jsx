@@ -1,0 +1,313 @@
+import { useState } from 'react';
+import { Calendar, Clock, User, Play, FileText, BookOpen, ChevronDown, Star, CheckCircle2 } from 'lucide-react';
+import { Card } from '../ui/card';
+import { cn } from '../../lib/utils';
+import api from '../../lib/api';
+import { motion, AnimatePresence } from 'framer-motion';
+
+function formatSessionDateTime(startIso, endIso) {
+  if (!startIso || !endIso) return { dateLabel: '', timeLabel: '' };
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  const now = new Date();
+
+  const isToday = start.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const isTomorrow = start.toDateString() === tomorrow.toDateString();
+
+  let dateLabel;
+  if (isToday) dateLabel = 'Today';
+  else if (isTomorrow) dateLabel = 'Tomorrow';
+  else
+    dateLabel = new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    }).format(start);
+
+  const timeFmt = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+  const timeLabel = `${timeFmt.format(start)} - ${timeFmt.format(end)}`;
+
+  return { dateLabel, timeLabel };
+}
+
+export function SessionCard({ session, isExpanded, onToggle }) {
+  const attended = session.status === 'attended';
+  const { dateLabel, timeLabel } = formatSessionDateTime(
+    session.start_time,
+    session.end_time
+  );
+
+  const resourceLinks = attended
+    ? [
+        {
+          href: session.recording_link,
+          icon: Play,
+          label: 'Recording',
+          color: 'text-primary',
+          bg: 'bg-primary-subtle',
+          hover: 'hover:border-primary/40 hover:bg-primary/5'
+        },
+        {
+          href: session.notes_link,
+          icon: FileText,
+          label: 'Notes',
+          color: 'text-info',
+          bg: 'bg-info-subtle',
+          hover: 'hover:border-info/40 hover:bg-info/5'
+        },
+        {
+          href: session.homework_link,
+          icon: BookOpen,
+          label: 'Homework',
+          color: 'text-warning',
+          bg: 'bg-warning-subtle',
+          hover: 'hover:border-warning/40 hover:bg-warning/5'
+        }
+      ].filter((r) => r.href)
+    : [];
+
+  const [isRated, setIsRated] = useState(!!session.rating);
+  const [rating, setRating] = useState(session.rating || 0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+
+  const handleRate = async (value) => {
+    if (isRated || isSubmitting) return;
+
+    setRating(value);
+    setIsSubmitting(true);
+
+    try {
+      await api.put('/api/sessions/', {
+        id: session.id,
+        rating: value
+      });
+      setIsRated(true);
+      setShowSuccess(true);
+      setTimeout(() => {
+        setShowSuccess(false);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to rate session:', err);
+      setRating(0);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Card padding="md" className="transition-all duration-200">
+      {/* Header / Unexpanded View */}
+      <div
+        className={cn(
+          'flex items-start gap-3.5',
+          attended && 'group cursor-pointer select-none'
+        )}
+        onClick={() => attended && onToggle?.()}
+      >
+        {/* Left icon badge */}
+        <div
+          className={cn(
+            'flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-colors',
+            attended
+              ? 'bg-primary-subtle group-hover:bg-primary/20'
+              : 'bg-info-subtle'
+          )}
+        >
+          <Calendar
+            className={cn(
+              'h-5 w-5',
+              attended ? 'text-primary' : 'text-info'
+            )}
+          />
+        </div>
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1">
+              <p className="text-text-primary line-clamp-2 text-[15px] leading-snug font-semibold">
+                {session.title}
+              </p>
+              {/* Meta row */}
+              <div className="text-text-muted mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>
+                    {dateLabel}, {timeLabel}
+                  </span>
+                </span>
+                {session.tutor_profile?.full_name && (
+                  <span className="inline-flex items-center gap-1">
+                    <User className="h-3.5 w-3.5" />
+                    {session.tutor_profile.full_name}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-3">
+              <span
+                className={cn(
+                  'shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                  session.status === 'cancelled'
+                    ? 'border-danger/15 bg-danger-subtle text-danger'
+                    : attended
+                    ? 'border-primary/15 bg-primary-subtle text-primary-hover'
+                    : 'border-info/15 bg-info-subtle text-info'
+                )}
+              >
+                {session.status === 'cancelled' ? 'Cancelled' : attended ? 'Attended' : 'Scheduled'}
+              </span>
+              {attended && (
+                <button
+                  type="button"
+                  className="text-text-muted hover:bg-surface-elevated flex h-8 w-8 items-center justify-center rounded-full transition-colors cursor-pointer"
+                  aria-label="Toggle details"
+                >
+                  <ChevronDown
+                    className={cn(
+                      'h-5 w-5 transition-transform duration-300',
+                      isExpanded && 'text-primary -rotate-180'
+                    )}
+                  />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expanded View */}
+      <AnimatePresence>
+        {isExpanded && attended && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="pt-4 pb-1">
+              <div className="border-border-light mb-4 border-t" />
+
+              {/* Resources */}
+              {resourceLinks.length > 0 && (
+                <div className="mb-4 grid grid-cols-3 gap-3">
+                  {resourceLinks.map(
+                    ({ href, icon: Icon, label, color, bg, hover }) => (
+                      <a
+                        key={label}
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                          'group border-border-light bg-surface-muted flex flex-col items-center justify-center gap-2.5 rounded-xl border p-3 text-center transition-all duration-200',
+                          hover
+                        )}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div
+                          className={cn(
+                            'flex h-9 w-9 items-center justify-center rounded-xl transition-transform group-hover:scale-110',
+                            bg
+                          )}
+                        >
+                          <Icon className={cn('h-4 w-4', color)} />
+                        </div>
+                        <span className="text-text-primary text-xs font-semibold">
+                          {label}
+                        </span>
+                      </a>
+                    )
+                  )}
+                </div>
+              )}
+
+              {/* Rating Section */}
+              {!isRated || showSuccess ? (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div
+                    className="border-primary/10 bg-primary-subtle/70 flex items-center justify-between rounded-xl border px-4 py-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="text-primary-hover text-sm font-semibold">
+                      {showSuccess ? 'Thanks for rating!' : 'Rate your class'}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {showSuccess ? (
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                        >
+                          <CheckCircle2 className="text-primary h-6 w-6" />
+                        </motion.div>
+                      ) : (
+                        [1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRate(star);
+                            }}
+                            onMouseEnter={() => setHoverRating(star)}
+                            onMouseLeave={() => setHoverRating(0)}
+                            disabled={isSubmitting}
+                            className={cn(
+                              'transition-transform hover:scale-110 focus:outline-none cursor-pointer',
+                              isSubmitting && 'cursor-not-allowed opacity-50'
+                            )}
+                          >
+                            <Star
+                              className={cn(
+                                'h-6 w-6',
+                                star <= (hoverRating || rating)
+                                  ? 'text-warning fill-warning'
+                                  : 'text-text-muted/40 hover:text-warning/70'
+                              )}
+                            />
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="border-border-light bg-surface-muted/50 flex items-center justify-between rounded-xl border px-4 py-3">
+                  <div className="text-text-muted text-sm font-medium">
+                    Your rating
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <div key={star}>
+                        <Star
+                          className={cn(
+                            'h-5 w-5',
+                            star <= rating ? 'text-warning fill-warning/60' : 'text-text-muted/20'
+                          )}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
+  );
+}

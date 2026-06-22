@@ -134,6 +134,8 @@ class StudentDashboardView(APIView):
         return Response({
             "student_name": student.full_name or request.user.full_name or "",
             "mentor": student.mentor.full_name if student.mentor else None,
+            "mentor_email": student.mentor.email if student.mentor else None,
+            "mentor_phone": student.mentor.mobile_number if student.mentor else None,
             "tutor": student.tutor.full_name if student.tutor else None,
             "quota": student.total_class_quota,
             "meet_link": student.meet_link or "",
