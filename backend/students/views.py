@@ -1,4 +1,6 @@
+import datetime
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -6,6 +8,8 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 
 from students.models import Student
 from invitations.models import Invitation, InvitationStatusChoices
+from sessions.models import Session, SessionStatusChoices
+from sessions.serializers import SessionSerializer
 
 User = get_user_model()
 
@@ -35,27 +39,64 @@ class StaffDashboardStatsView(APIView):
     """
     GET /api/dashboard/stats/
     Returns the numbers of students, mentors, tutors, and pending invitations.
+    Also returns sign-up history over the last 7 days and recent signups.
     Visible to: Admin, Mentor, Tutor
     """
     permission_classes = [IsStaffUser]
 
     def get(self, request, *args, **kwargs):
+        # Base counts
         students_count = Student.objects.count()
         mentors_count = User.objects.filter(role='MENTOR').count()
         tutors_count = User.objects.filter(role='TUTOR').count()
         pending_invites_count = Invitation.objects.filter(status=InvitationStatusChoices.PENDING).count()
 
+        # Build last 7 days signup data (UTC days)
+        now_utc = timezone.now()
+        day_map = {}
+        for i in range(6, -1, -1):
+            d = now_utc - datetime.timedelta(days=i)
+            day_num = str(int(d.strftime("%d")))
+            key = f"{d.strftime('%b')} {day_num}"
+            day_map[key] = 0
+
+        since = now_utc - datetime.timedelta(days=6)
+        since = since.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        signups = Student.objects.filter(created_at__gte=since)
+        for s in signups:
+            created_utc = s.created_at.astimezone(datetime.timezone.utc)
+            day_num = str(int(created_utc.strftime("%d")))
+            key = f"{created_utc.strftime('%b')} {day_num}"
+            if key in day_map:
+                day_map[key] += 1
+
+        signup_data = [{"day": day, "signups": count} for day, count in day_map.items()]
+
+        # Recent 5 student signups
+        recent = Student.objects.all().order_by('-created_at')[:5]
+        recent_signups = [
+            {
+                "student_code": s.student_code,
+                "full_name": s.full_name,
+                "created_at": s.created_at.isoformat()
+            }
+            for s in recent
+        ]
+
         return Response({
             "students": students_count,
             "mentors": mentors_count,
             "tutors": tutors_count,
-            "pending_invitations": pending_invites_count
+            "pending_invitations": pending_invites_count,
+            "signup_data": signup_data,
+            "recent_signups": recent_signups
         }, status=status.HTTP_200_OK)
 
 class StudentDashboardView(APIView):
     """
     GET /api/student/dashboard/
-    Returns the student's dashboard details.
+    Returns the student's dashboard details including session summaries.
     Visible to: Student
     """
     permission_classes = [IsStudentUser]
@@ -71,10 +112,144 @@ class StudentDashboardView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        now = timezone.now()
+
+        # Count of scheduled and attended sessions
+        scheduled_count = Session.objects.filter(student=student, status=SessionStatusChoices.SCHEDULED).count()
+        attended_count = Session.objects.filter(student=student, status=SessionStatusChoices.ATTENDED).count()
+
+        # Next upcoming class (scheduled, start time in the future)
+        next_sess = Session.objects.filter(
+            student=student,
+            status=SessionStatusChoices.SCHEDULED,
+            start_time__gte=now
+        ).order_by('start_time').first()
+
+        # Last completed class (attended, sorted desc)
+        last_sess = Session.objects.filter(
+            student=student,
+            status=SessionStatusChoices.ATTENDED
+        ).order_by('-start_time').first()
+
         return Response({
             "student_name": student.full_name or request.user.full_name or "",
             "mentor": student.mentor.full_name if student.mentor else None,
             "tutor": student.tutor.full_name if student.tutor else None,
             "quota": student.total_class_quota,
-            "meet_link": student.meet_link or ""
+            "meet_link": student.meet_link or "",
+            "scheduled_count": scheduled_count,
+            "attended_count": attended_count,
+            "next_session": SessionSerializer(next_sess).data if next_sess else None,
+            "last_session": SessionSerializer(last_sess).data if last_sess else None
         }, status=status.HTTP_200_OK)
+
+
+class StudentListView(APIView):
+    """
+    GET /api/students/ - List students
+      - ADMIN/MENTOR: See all students.
+      - TUTOR: See assigned students where status in ('ACTIVE', 'INACTIVE').
+    PUT /api/students/ - Update student details (meet link, class quota, status)
+      - ADMIN/MENTOR: Allowed.
+    """
+    permission_classes = [IsAuthenticated, IsStaffUser]
+
+    def get(self, request, *args, **kwargs):
+        role = request.user.role
+        is_tutor = role == 'TUTOR'
+        
+        queryset = Student.objects.all().order_by('student_code')
+        if is_tutor:
+            queryset = queryset.filter(tutor=request.user, status__in=['ACTIVE', 'INACTIVE'])
+        
+        data = []
+        for s in queryset.select_related('profile', 'mentor', 'tutor'):
+            data.append({
+                "id": str(s.id),
+                "student_code": s.student_code,
+                "full_name": s.full_name,
+                "mobile_number": s.mobile_number or "",
+                "country": s.country or "",
+                "state": s.state or "",
+                "school_name": s.school_name or "",
+                "grade": s.grade or "",
+                "syllabus": s.syllabus or "",
+                "admission_date": s.admission_date.isoformat() if s.admission_date else None,
+                "created_at": s.created_at.isoformat(),
+                "meet_link": s.meet_link or "",
+                "total_class_quota": s.total_class_quota,
+                "remarks_for_mentor": s.remarks_for_mentor or "",
+                "status": s.status.lower(),
+                "status_note": s.status_note or "",
+                "profiles": {
+                    "email": s.profile.email if s.profile else "",
+                    "avatar_url": s.profile.avatar_url if s.profile else None
+                } if s.profile else None,
+                "mentor_profile": {
+                    "id": str(s.mentor.id),
+                    "full_name": s.mentor.full_name or "",
+                    "email": s.mentor.email
+                } if s.mentor else None,
+                "tutor_profile": {
+                    "id": str(s.tutor.id),
+                    "full_name": s.tutor.full_name or "",
+                    "email": s.tutor.email
+                } if s.tutor else None,
+            })
+        return Response(data, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        # Enforce Admin/Mentor permissions for modifications
+        if not (request.user.role in ('ADMIN', 'MENTOR') or request.user.is_superuser):
+            return Response(
+                {"error": "FORBIDDEN", "message": "You do not have permission to update student details."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        student_id = request.data.get("id")
+        if not student_id:
+            return Response(
+                {"error": "INVALID_INPUT", "message": "student id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        student = Student.objects.filter(id=student_id).first()
+        if not student:
+            return Response(
+                {"error": "NOT_FOUND", "message": "Student not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        # Update fields if present in request.data
+        if "meet_link" in request.data:
+            student.meet_link = request.data.get("meet_link")
+            
+        if "total_class_quota" in request.data:
+            try:
+                quota = int(request.data.get("total_class_quota"))
+                student.total_class_quota = quota
+            except (ValueError, TypeError):
+                return Response(
+                    {"error": "INVALID_INPUT", "message": "total_class_quota must be an integer."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+        if "status" in request.data:
+            new_status = request.data.get("status").upper()
+            if new_status not in ('ACTIVE', 'INACTIVE', 'EXPIRED'):
+                return Response(
+                    {"error": "INVALID_STATUS", "message": "Invalid student status specified."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            student.status = new_status
+            
+        if "status_note" in request.data:
+            student.status_note = request.data.get("status_note")
+            
+        student.save()
+        return Response({
+            "status": "updated",
+            "message": "Student updated successfully."
+        }, status=status.HTTP_200_OK)
+
+

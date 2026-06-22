@@ -2,12 +2,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework.authentication import SessionAuthentication
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from .models import Invitation, InvitationStatusChoices, InvitationRoleChoices
 from .sheets import GoogleSheetsService
 
 User = get_user_model()
+
+class CSRFExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return  # Bypasses CSRF check for session authentication on APIs
 
 class IsAdminOrMentor(BasePermission):
     """
@@ -26,6 +31,7 @@ class LookupStudentView(APIView):
     Backend fetches the data from the Google Sheet (range A3:AB of 'enrollment data' tab) on demand.
     Returns the mapped data directly without writing to the database yet.
     """
+    authentication_classes = [CSRFExemptSessionAuthentication]
     permission_classes = [IsAuthenticated, IsAdminOrMentor]
 
     def post(self, request, *args, **kwargs):
@@ -108,12 +114,39 @@ class LookupStudentView(APIView):
             status=status.HTTP_200_OK
         )
 
+
+
 class CreateInvitationView(APIView):
     """
     Step 2: Admin or Mentor selects Mentor/Tutor/Meet Link and submits to create invitation whitelisting for students,
     or whitelists an Admin, Mentor, or Tutor by email directly.
+    Also supports listing, editing, and deleting whitelist invitations.
     """
+    authentication_classes = [CSRFExemptSessionAuthentication]
     permission_classes = [IsAuthenticated, IsAdminOrMentor]
+
+    def get(self, request, *args, **kwargs):
+        invitations = Invitation.objects.all().order_by('-created_at')
+        data = []
+        for inv in invitations:
+            invited_by_profile = None
+            if inv.invited_by:
+                invited_by_profile = {
+                    "id": str(inv.invited_by.id),
+                    "full_name": inv.invited_by.full_name or "",
+                    "email": inv.invited_by.email
+                }
+            data.append({
+                "id": str(inv.id),
+                "email": inv.email,
+                "role": inv.role,
+                "status": inv.status,
+                "created_at": inv.created_at.isoformat(),
+                "invited_by": inv.invited_by.id if inv.invited_by else None,
+                "invited_by_profile": invited_by_profile,
+                "extra_data": inv.extra_data
+            })
+        return Response(data, status=status.HTTP_200_OK)
 
     def post(self, request, *args, **kwargs):
         data = request.data
@@ -133,6 +166,15 @@ class CreateInvitationView(APIView):
             )
 
         email = email.strip().lower()
+
+        # Enforce role invitation permissions:
+        # Admin can invite anyone.
+        # Mentors can invite Students only.
+        if request.user.role == 'MENTOR' and role != 'STUDENT':
+            return Response(
+                {"error": "FORBIDDEN", "message": "Mentors can only invite students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         # Double check existing user
         if User.objects.filter(email=email).exists():
@@ -218,6 +260,14 @@ class CreateInvitationView(APIView):
                 status_str = "created"
                 res_status = status.HTTP_201_CREATED
 
+            # Send invitation email
+            try:
+                from .emails import send_invitation_email
+                send_invitation_email(invitation)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send invitation email to {email}: {e}")
+
             return Response(
                 {
                     "status": status_str,
@@ -231,3 +281,98 @@ class CreateInvitationView(APIView):
                 },
                 status=res_status
             )
+
+    def patch(self, request, *args, **kwargs):
+        old_email = request.data.get("old_email")
+        new_email = request.data.get("new_email")
+
+        if not old_email or not new_email:
+            return Response(
+                {"error": "INVALID_INPUT", "message": "Both old_email and new_email are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        old_email = old_email.strip().lower()
+        new_email = new_email.strip().lower()
+
+        invitation = Invitation.objects.filter(email=old_email).first()
+        if not invitation:
+            return Response(
+                {"error": "NOT_FOUND", "message": "Invitation not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if request.user.role == 'MENTOR' and invitation.role != 'STUDENT':
+            return Response(
+                {"error": "FORBIDDEN", "message": "Mentors can only modify student invitations."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if invitation.status == InvitationStatusChoices.ACCEPTED:
+            return Response(
+                {"error": "INVITATION_ALREADY_ACCEPTED", "message": "Cannot edit an accepted invitation."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if Invitation.objects.filter(email=new_email).exclude(id=invitation.id).exists():
+            return Response(
+                {"error": "INVITATION_EXISTS", "message": "An invitation with the new email already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=new_email).exists():
+            return Response(
+                {"error": "USER_ALREADY_REGISTERED", "message": "A user with the new email is already registered."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        invitation.email = new_email
+        invitation.save()
+
+        # Send invitation email to the new address
+        try:
+            from .emails import send_invitation_email
+            send_invitation_email(invitation)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to send invitation email to {new_email}: {e}")
+
+        return Response({
+            "status": "updated",
+            "message": f"Invitation email updated from {old_email} to {new_email}."
+        }, status=status.HTTP_200_OK)
+
+    def delete(self, request, *args, **kwargs):
+        email = request.data.get("email")
+        if not email:
+            return Response(
+                {"error": "INVALID_INPUT", "message": "email is required in delete payload."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        email = email.strip().lower()
+        invitation = Invitation.objects.filter(email=email).first()
+        if not invitation:
+            return Response(
+                {"error": "NOT_FOUND", "message": "Invitation not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if request.user.role == 'MENTOR' and invitation.role != 'STUDENT':
+            return Response(
+                {"error": "FORBIDDEN", "message": "Mentors can only delete student invitations."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if invitation.status == InvitationStatusChoices.ACCEPTED:
+            return Response(
+                {"error": "INVITATION_ALREADY_ACCEPTED", "message": "Cannot delete an accepted invitation."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        invitation.delete()
+        return Response({
+            "status": "deleted",
+            "message": f"Invitation for {email} has been withdrawn."
+        }, status=status.HTTP_200_OK)
+

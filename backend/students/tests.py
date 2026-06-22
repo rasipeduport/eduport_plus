@@ -122,3 +122,33 @@ class DashboardAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["tutors"]), 1)
         self.assertEqual(response.data["tutors"][0]["full_name"], "Tutor User")
+
+    def test_student_list_and_update(self):
+        # Authenticate as admin
+        self.client.force_authenticate(user=self.admin)
+        
+        # Test student list (GET /api/students/)
+        url = reverse('students:student-list')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["student_code"], "EDP00009")
+        
+        # Test student update (PUT /api/students/)
+        payload = {
+            "id": str(self.student.id),
+            "meet_link": "https://meet.google.com/xxx-yyyy-zzz",
+            "total_class_quota": 20,
+            "status": "INACTIVE",
+            "status_note": "A temporary pause"
+        }
+        response = self.client.put(url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify database reflects updates
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.meet_link, "https://meet.google.com/xxx-yyyy-zzz")
+        self.assertEqual(self.student.total_class_quota, 20)
+        self.assertEqual(self.student.status, "INACTIVE")
+        self.assertEqual(self.student.status_note, "A temporary pause")
+

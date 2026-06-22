@@ -1,5 +1,6 @@
 import logging
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 from django.contrib.auth import login, logout, get_user_model
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -57,6 +58,7 @@ class GoogleLoginView(APIView):
     provisions the user if they are whitelisted via an Invitation, and logs them in.
     """
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     @method_decorator(ensure_csrf_cookie)  # Sets CSRF cookie on login call
     def post(self, request, *args, **kwargs):
@@ -78,6 +80,19 @@ class GoogleLoginView(APIView):
         email = google_claims["email"]
         name = google_claims["name"]
         picture = google_claims["picture"]
+
+        # Check if the email exists in the Invitations table (whitelisted_emails)
+        from invitations.models import Invitation
+        if not Invitation.objects.filter(email=email).exists():
+            return Response(
+                {
+                    "error": "ACCESS_RESTRICTED",
+                    "message": "Access Restricted\n\nYour email is not authorized to access EduPlus.\n\nPlease contact your administrator for access."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+
 
         # Search for existing user
         user = User.objects.filter(email=email).first()
@@ -155,11 +170,18 @@ class GoogleLoginView(APIView):
             status=status.HTTP_201_CREATED if is_new_user else status.HTTP_200_OK
         )
 
+from rest_framework.authentication import SessionAuthentication
+
+class CSRFExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return  # Skip CSRF check for logout
+
 class LogoutView(APIView):
     """
     Logs out the authenticated user session.
     """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CSRFExemptSessionAuthentication]
 
     def post(self, request, *args, **kwargs):
         user = request.user
@@ -209,23 +231,220 @@ class MeView(APIView):
 class MentorListView(APIView):
     """
     GET /api/mentors/
-    Returns list of all active mentors.
+    Returns list of active mentors with their assigned student counts.
+    If ?all=true is passed, returns active mentors + pending mentor invitations.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        mentors = User.objects.filter(role='MENTOR').order_by('full_name')
-        data = [{"id": str(m.id), "full_name": m.full_name or "", "email": m.email} for m in mentors]
-        return Response({"mentors": data}, status=status.HTTP_200_OK)
+        from django.db.models import Count
+        from invitations.models import Invitation, InvitationStatusChoices
+        
+        # Query active mentors
+        mentors = User.objects.filter(role='MENTOR').annotate(
+            assigned_students_count=Count('mentored_students')
+        ).order_by('-created_at')
+        
+        active_data = [
+            {
+                "kind": "active",
+                "id": str(m.id),
+                "full_name": m.full_name or "",
+                "email": m.email,
+                "mobile_number": m.mobile_number or "",
+                "created_at": m.created_at.isoformat(),
+                "invited_by_profile": {
+                    "id": str(m.invited_by.id),
+                    "full_name": m.invited_by.full_name or "",
+                    "email": m.invited_by.email
+                } if m.invited_by else None,
+                "assigned_students_count": m.assigned_students_count
+            }
+            for m in mentors
+        ]
+        
+        # Backward compatibility for dropdown selects (which don't pass ?all=true)
+        if request.GET.get('all') != 'true':
+            return Response(
+                {"mentors": [{"id": d["id"], "full_name": d["full_name"], "email": d["email"]} for d in active_data]},
+                status=status.HTTP_200_OK
+            )
+            
+        return Response({"mentors": active_data}, status=status.HTTP_200_OK)
 
 class TutorListView(APIView):
     """
     GET /api/tutors/
-    Returns list of all active tutors.
+    Returns list of active tutors with their assigned student counts.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        tutors = User.objects.filter(role='TUTOR').order_by('full_name')
-        data = [{"id": str(t.id), "full_name": t.full_name or "", "email": t.email} for t in tutors]
-        return Response({"tutors": data}, status=status.HTTP_200_OK)
+        from django.db.models import Count
+        
+        # Query active tutors
+        tutors = User.objects.filter(role='TUTOR').annotate(
+            assigned_students_count=Count('tutored_students')
+        ).order_by('-created_at')
+        
+        active_data = [
+            {
+                "kind": "active",
+                "id": str(t.id),
+                "full_name": t.full_name or "",
+                "email": t.email,
+                "mobile_number": t.mobile_number or "",
+                "created_at": t.created_at.isoformat(),
+                "invited_by_profile": {
+                    "id": str(t.invited_by.id),
+                    "full_name": t.invited_by.full_name or "",
+                    "email": t.invited_by.email
+                } if t.invited_by else None,
+                "assigned_students_count": t.assigned_students_count
+            }
+            for t in tutors
+        ]
+        
+        # Backward compatibility for dropdown selects (which don't pass ?all=true)
+        if request.GET.get('all') != 'true':
+            return Response(
+                {"tutors": [{"id": d["id"], "full_name": d["full_name"], "email": d["email"]} for d in active_data]},
+                status=status.HTTP_200_OK
+            )
+            
+        return Response({"tutors": active_data}, status=status.HTTP_200_OK)
+
+class AdminListView(APIView):
+    """
+    GET /api/admins/
+    Returns list of active admins.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        admins = User.objects.filter(role='ADMIN').order_by('-created_at')
+        active_data = [
+            {
+                "kind": "active",
+                "id": str(a.id),
+                "full_name": a.full_name or "",
+                "email": a.email,
+                "mobile_number": a.mobile_number or "",
+                "created_at": a.created_at.isoformat(),
+                "invited_by_profile": {
+                    "id": str(a.invited_by.id),
+                    "full_name": a.invited_by.full_name or "",
+                    "email": a.invited_by.email
+                } if a.invited_by else None,
+                "assigned_students_count": None
+            }
+            for a in admins
+        ]
+        
+        return Response({"admins": active_data}, status=status.HTTP_200_OK)
+
+class UserDetailView(APIView):
+    """
+    PATCH /api/users/<id>/ - Edit User name and mobile number.
+    DELETE /api/users/<id>/ - Delete User profile.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk, *args, **kwargs):
+        if request.user.role != 'ADMIN':
+            return Response(
+                {"error": "FORBIDDEN", "message": "Only admins can edit user details."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        target_user = get_object_or_404(User, pk=pk)
+        
+        full_name = request.data.get("full_name")
+        mobile_number = request.data.get("mobile_number")
+        
+        if full_name is not None:
+            full_name = full_name.strip()
+            if not full_name:
+                return Response(
+                    {"error": "INVALID_INPUT", "message": "Name cannot be empty."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            target_user.full_name = full_name
+            
+        if "mobile_number" in request.data:
+            target_user.mobile_number = mobile_number.strip() if mobile_number else None
+            
+        target_user.save()
+        
+        # Log activity
+        ActivityLog.objects.create(
+            actor=request.user,
+            actor_email=request.user.email,
+            actor_name=request.user.full_name,
+            actor_role=request.user.role,
+            action="USER_UPDATE",
+            entity_type="USER",
+            entity_id=str(target_user.id),
+            entity_label=target_user.full_name or target_user.email,
+            student=None,
+            context={"changes": {"full_name": target_user.full_name, "mobile_number": target_user.mobile_number}}
+        )
+        
+        return Response({"success": True, "profile": {
+            "id": str(target_user.id),
+            "full_name": target_user.full_name,
+            "mobile_number": target_user.mobile_number,
+            "email": target_user.email,
+        }}, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk, *args, **kwargs):
+        if request.user.role != 'ADMIN':
+            return Response(
+                {"error": "FORBIDDEN", "message": "Only admins can delete users."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        from django.shortcuts import get_object_or_404
+        target_user = get_object_or_404(User, pk=pk)
+        
+        if target_user.role not in ('ADMIN', 'MENTOR', 'TUTOR'):
+            return Response(
+                {"error": "INVALID_ROLE", "message": "This user cannot be deleted from here."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        if target_user.role == 'ADMIN':
+            is_self = request.user.id == target_user.id
+            is_inviter = target_user.invited_by is not None and target_user.invited_by.id == request.user.id
+            
+            if not is_self and not is_inviter:
+                return Response(
+                    {"error": "FORBIDDEN", "message": "Only the admin themselves or the person who invited them can delete an admin."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            if is_self:
+                other_admins_count = User.objects.filter(role='ADMIN').exclude(id=request.user.id).count()
+                if other_admins_count == 0:
+                    return Response(
+                        {"error": "LAST_ADMIN", "message": "You are the only admin. Promote another user before deleting your account."},
+                        status=status.HTTP_409_CONFLICT
+                    )
+        
+        # Log activity
+        ActivityLog.objects.create(
+            actor=request.user,
+            actor_email=request.user.email,
+            actor_name=request.user.full_name,
+            actor_role=request.user.role,
+            action="USER_DELETE",
+            entity_type="USER",
+            entity_id=str(target_user.id),
+            entity_label=target_user.full_name or target_user.email,
+            student=None,
+            context={"role": target_user.role}
+        )
+        
+        target_user.delete()
+        return Response({"success": True}, status=status.HTTP_200_OK)
+

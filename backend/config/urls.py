@@ -15,9 +15,9 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from students.views import StaffDashboardStatsView, StudentDashboardView
-from accounts.views import MentorListView, TutorListView
+from accounts.views import MentorListView, TutorListView, AdminListView, UserDetailView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -27,4 +27,14 @@ urlpatterns = [
     path('api/student/dashboard/', StudentDashboardView.as_view(), name='student-dashboard'),
     path('api/mentors/', MentorListView.as_view(), name='mentor-list'),
     path('api/tutors/', TutorListView.as_view(), name='tutor-list'),
+    path('api/admins/', AdminListView.as_view(), name='admin-list'),
+    path('api/admins', AdminListView.as_view()),
+    path('api/users/<uuid:pk>/', UserDetailView.as_view(), name='user-detail'),
+    path('api/users/<uuid:pk>', UserDetailView.as_view()),
+    path('api/students/', include('students.urls', namespace='students')),
+    path('api/students', include('students.urls', namespace='students')),
+    path('api/sessions/', include('sessions.urls', namespace='sessions')),
+    path('api/sessions', include('sessions.urls', namespace='sessions')),
+    path('api/activity/', include('activity.urls', namespace='activity')),
+    path('api/activity', include('activity.urls', namespace='activity')),
 ]

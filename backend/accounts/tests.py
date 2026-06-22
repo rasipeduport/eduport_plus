@@ -3,11 +3,13 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from rest_framework.test import APITestCase
 from rest_framework import status
+from unittest.mock import patch
 from invitations.models import Invitation, InvitationStatusChoices, InvitationRoleChoices
 from students.models import Student
 from activity.models import ActivityLog
 
 User = get_user_model()
+
 
 @override_settings(ALLOW_MOCK_AUTH=True)
 class GoogleAuthenticationTests(APITestCase):
@@ -75,10 +77,27 @@ class GoogleAuthenticationTests(APITestCase):
         mock_token = "mock:uninvited@gmail.com:Uninvited User:https://example.com/pic.png"
         response = self.client.post(self.login_url, {"credential": mock_token})
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data["error"], "INVITATION_REQUIRED")
+        self.assertEqual(response.data["error"], "ACCESS_RESTRICTED")
         
         # Verify no User profile was created
         self.assertFalse(User.objects.filter(email="uninvited@gmail.com").exists())
+
+    def test_login_uninvited_but_in_google_sheet_remains_restricted(self):
+        email = "sheets_student@gmail.com"
+        mock_token = f"mock:{email}:Jane Google Profile:https://lh3.googleusercontent.com/a"
+        
+        # Verify no invitation exists beforehand
+        self.assertFalse(Invitation.objects.filter(email=email).exists())
+        
+        # Perform login
+        response = self.client.post(self.login_url, {"credential": mock_token})
+        
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["error"], "ACCESS_RESTRICTED")
+        
+        # Verify no User profile was created
+        self.assertFalse(User.objects.filter(email=email).exists())
+
 
     def test_login_first_time_student_onboards_and_creates_records(self):
         # 1. Login with whitelisted student email
@@ -194,3 +213,125 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["email"], self.student_email)
         self.assertEqual(response.data["student_profile"]["student_code"], self.student_code)
+
+class StaffManagementTests(APITestCase):
+    def setUp(self):
+        # Create an admin user to perform operations
+        self.admin = User.objects.create_user(
+            email="admin@eduport.com",
+            password="password123",
+            full_name="Primary Admin",
+            role="ADMIN"
+        )
+        self.mentor = User.objects.create_user(
+            email="mentor@eduport.com",
+            password="password123",
+            full_name="Active Mentor",
+            role="MENTOR"
+        )
+        self.tutor = User.objects.create_user(
+            email="tutor@eduport.com",
+            password="password123",
+            full_name="Active Tutor",
+            role="TUTOR"
+        )
+        
+        # Create pending invitations (ghost rows)
+        self.ghost_admin = Invitation.objects.create(
+            email="ghost_admin@eduport.com",
+            role=InvitationRoleChoices.ADMIN,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"full_name": "Ghost Admin"}
+        )
+        self.ghost_mentor = Invitation.objects.create(
+            email="ghost_mentor@eduport.com",
+            role=InvitationRoleChoices.MENTOR,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"full_name": "Ghost Mentor"}
+        )
+        self.ghost_tutor = Invitation.objects.create(
+            email="ghost_tutor@eduport.com",
+            role=InvitationRoleChoices.TUTOR,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"full_name": "Ghost Tutor"}
+        )
+
+        self.client.force_authenticate(user=self.admin)
+
+    def test_admin_list_returns_only_active_admins(self):
+        response = self.client.get('/api/admins/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        admins = response.data.get("admins", [])
+        
+        emails = [a["email"] for a in admins]
+        self.assertIn("admin@eduport.com", emails)
+        self.assertNotIn("ghost_admin@eduport.com", emails)
+        
+        # Check active flags
+        active_admin = next(a for a in admins if a["email"] == "admin@eduport.com")
+        self.assertEqual(active_admin["kind"], "active")
+
+    def test_mentor_list_all_returns_only_active_mentors(self):
+        response = self.client.get('/api/mentors/?all=true')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mentors = response.data.get("mentors", [])
+        
+        emails = [m["email"] for m in mentors]
+        self.assertIn("mentor@eduport.com", emails)
+        self.assertNotIn("ghost_mentor@eduport.com", emails)
+
+    def test_mentor_list_default_returns_only_active_retains_compat(self):
+        response = self.client.get('/api/mentors/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mentors = response.data.get("mentors", [])
+        
+        emails = [m["email"] for m in mentors]
+        self.assertIn("mentor@eduport.com", emails)
+        self.assertNotIn("ghost_mentor@eduport.com", emails)
+
+    def test_edit_user_details(self):
+        url = f'/api/users/{self.mentor.id}/'
+        payload = {"full_name": "Updated Mentor Name", "mobile_number": "+919000000000"}
+        response = self.client.patch(url, payload)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mentor.refresh_from_db()
+        self.assertEqual(self.mentor.full_name, "Updated Mentor Name")
+        self.assertEqual(self.mentor.mobile_number, "+919000000000")
+
+    def test_edit_user_details_empty_name_fails(self):
+        url = f'/api/users/{self.mentor.id}/'
+        payload = {"full_name": "  "}
+        response = self.client.patch(url, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_user_mentor(self):
+        url = f'/api/users/{self.mentor.id}/'
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(id=self.mentor.id).exists())
+
+    def test_delete_last_admin_fails(self):
+        # Admin deletes themselves while being the only admin
+        url = f'/api/users/{self.admin.id}/'
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(User.objects.filter(id=self.admin.id).exists())
+
+    def test_delete_admin_succeeds_if_other_admin_exists(self):
+        other_admin = User.objects.create_user(
+            email="admin2@eduport.com",
+            password="password123",
+            role="ADMIN"
+        )
+        url = f'/api/users/{other_admin.id}/'
+        
+        # Invite connection test: let's make caller the inviter, or target the inviter
+        # For simplicity, target's invited_by is set to caller (self.admin)
+        other_admin.invited_by = self.admin
+        other_admin.save()
+        
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(id=other_admin.id).exists())
+

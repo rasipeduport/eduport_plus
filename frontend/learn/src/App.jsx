@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { GraduationCap, Compass, Presentation, ExternalLink, RefreshCw, LogOut, Loader2, ArrowRight } from 'lucide-react';
+import { GraduationCap, Compass, Presentation, ExternalLink, RefreshCw, LogOut, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
 import api from './lib/api';
 
 // Configurable Hub URL for redirecting staff roles
@@ -83,8 +83,8 @@ function HeaderLayout({ user, logout, children }) {
     <div className="min-h-screen flex flex-col bg-[#09090b] text-zinc-100">
       <header className="h-16 bg-[#0a0a0c] border-b border-[#1e1e24] flex items-center justify-between px-8 shadow-md">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-sm">
-            E+
+          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 flex items-center justify-center border border-indigo-500/20 shadow-sm shrink-0">
+            <img src="/icon-transparent.png" alt="E+" className="w-5 h-5 object-contain" />
           </div>
           <div>
             <h1 className="font-bold text-sm leading-tight text-white m-0">Eduport Plus</h1>
@@ -120,26 +120,36 @@ function HeaderLayout({ user, logout, children }) {
   );
 }
 
+// Global flag to track Google Sign-In initialization
+let learnGsiInitialized = false;
+
 // Login Component (Premium Dark Theme Center Card)
 function Login() {
   const [error, setError] = useState('');
+  const [accessRestricted, setAccessRestricted] = useState(false);
   const [mockEmail, setMockEmail] = useState('');
   const [mockName, setMockName] = useState('');
   const [loading, setLoading] = useState(false);
   const [gsiLoaded, setGsiLoaded] = useState(false);
   const [showMock, setShowMock] = useState(false);
 
+  // Initialize Native Google One Tap / Sign In if available
   useEffect(() => {
-    const initGsi = () => {
-      if (window.google) {
-        setGsiLoaded(true);
-        const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
+    if (gsiLoaded && !accessRestricted) {
+      const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
+      
+      if (!learnGsiInitialized) {
         window.google.accounts.id.initialize({
           client_id: clientId,
           callback: handleGoogleCredentialResponse,
         });
+        learnGsiInitialized = true;
+      }
+
+      const btnEl = document.getElementById('google-signin-btn');
+      if (btnEl) {
         window.google.accounts.id.renderButton(
-          document.getElementById('google-signin-btn'),
+          btnEl,
           { 
             theme: 'filled_black', 
             size: 'large', 
@@ -149,21 +159,23 @@ function Login() {
             logo_alignment: 'left'
           }
         );
-        window.google.accounts.id.prompt(); // Trigger Google One Tap
       }
-    };
-
-    if (window.google) {
-      initGsi();
-    } else {
-      const interval = setInterval(() => {
-        if (window.google) {
-          initGsi();
-          clearInterval(interval);
-        }
-      }, 100);
-      return () => clearInterval(interval);
+      window.google.accounts.id.prompt(); // Trigger Google One Tap
     }
+  }, [gsiLoaded, accessRestricted]);
+
+  useEffect(() => {
+    if (window.google) {
+      setGsiLoaded(true);
+      return;
+    }
+    const interval = setInterval(() => {
+      if (window.google) {
+        setGsiLoaded(true);
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
   }, []);
 
   const handleGoogleCredentialResponse = async (response) => {
@@ -177,7 +189,11 @@ function Login() {
         window.location.href = '/dashboard';
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Please verify student invitation.');
+      if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+        setAccessRestricted(true);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Please verify student invitation.');
+      }
     } finally {
       setLoading(false);
     }
@@ -199,7 +215,11 @@ function Login() {
             }
           })
           .catch((err) => {
-            setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+            if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+              setAccessRestricted(true);
+            } else {
+              setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+            }
             setLoading(false);
           });
       }
@@ -225,16 +245,49 @@ function Login() {
         window.location.href = '/dashboard';
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+      if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+        setAccessRestricted(true);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  if (accessRestricted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
+        <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-red-950/30 border border-red-800/30 flex items-center justify-center text-red-500 mb-6">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-white tracking-tight">Access Restricted</h2>
+          
+          <div className="text-zinc-400 mt-4 text-sm leading-relaxed space-y-4">
+            <p>Your email is not authorized to access EduPlus.</p>
+            <p>Please contact your administrator for access.</p>
+          </div>
+          
+          <button
+            onClick={() => {
+              setAccessRestricted(false);
+              setError('');
+            }}
+            className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-semibold transition-colors mt-8"
+          >
+            Try Another Account
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
       <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 flex flex-col items-center">
+          <img src="/brand/logo.svg" alt="Eduport Plus" className="h-10 w-auto mb-4 object-contain" />
           <h2 
             className="text-2xl font-bold text-white tracking-tight cursor-pointer select-none" 
             onDoubleClick={() => setShowMock(prev => !prev)}
@@ -246,16 +299,18 @@ function Login() {
         </div>
 
         {error && (
-          <div className="w-full bg-red-950/50 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50">
+          <div className="w-full bg-red-950/50 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50 whitespace-pre-line">
             {error}
           </div>
         )}
 
         <div className="w-full space-y-6 flex flex-col items-center">
-          {gsiLoaded ? (
-            /* Real Google Sign In container */
-            <div id="google-signin-btn" className="w-full flex justify-center"></div>
-          ) : (
+          <div 
+            id="google-signin-btn" 
+            className="w-full flex justify-center"
+            style={{ display: gsiLoaded ? 'flex' : 'none' }}
+          ></div>
+          {!gsiLoaded && (
             /* Custom Google Pill button Fallback */
             <button
               onClick={handleGoogleSignInFallback}
@@ -472,8 +527,8 @@ function WaitingRoom({ logout }) {
     <div className="min-h-screen flex flex-col bg-[#070708] font-sans text-zinc-100">
       <header className="h-16 bg-[#0a0a0c] border-b border-[#1e1e24] flex items-center justify-between px-8 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-sm">
-            E+
+          <div className="w-8 h-8 rounded-lg bg-indigo-600/10 flex items-center justify-center border border-indigo-500/20 shadow-sm shrink-0">
+            <img src="/icon-transparent.png" alt="E+" className="w-5 h-5 object-contain" />
           </div>
           <h1 className="font-bold text-sm text-white m-0">Eduport Plus</h1>
         </div>
@@ -483,7 +538,8 @@ function WaitingRoom({ logout }) {
       </header>
 
       <main className="flex-1 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md bg-[#121214] border border-[#1e1e24] rounded-2xl shadow-xl p-8 text-center">
+        <div className="w-full max-w-md bg-[#121214] border border-[#1e1e24] rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
+          <img src="/brand/icon.png" alt="Eduport Plus" className="w-16 h-16 object-contain mb-6" />
           <h2 className="text-2xl font-bold text-white m-0">Account Verification</h2>
           <p className="text-zinc-400 text-sm mt-3 leading-relaxed">
             We are setting up your student profile! Your account details are currently waiting to be linked with your student records.

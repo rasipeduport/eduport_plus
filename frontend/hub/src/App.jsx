@@ -1,7 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, GraduationCap, Compass, Presentation, Mail, Plus, Check, LogOut, Loader2, ArrowRight, ShieldCheck, Info } from 'lucide-react';
+import { LayoutDashboard, GraduationCap, Compass, Presentation, Mail, Plus, Check, LogOut, Loader2, ArrowRight, ShieldCheck, ShieldAlert, Info, ChevronsUpDown, Sun, Moon, Monitor } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 import api from './lib/api';
+import StudentsPage from './components/StudentsPage';
+import InvitationsPage from './components/InvitationsPage';
+import AdminsPage from './components/AdminsPage';
+import MentorsPage from './components/MentorsPage';
+import TutorsPage from './components/TutorsPage';
 
 // Configurable Learn URL for redirecting student role
 const LEARN_URL = import.meta.env.VITE_LEARN_URL || 'http://localhost:3001';
@@ -70,6 +76,11 @@ function AuthProvider({ children }) {
 // Protected Layout with Sidebar
 function SidebarLayout({ user, logout, children }) {
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('theme') || 'system';
+  });
 
   const menuItems = [
     { title: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
@@ -78,87 +89,245 @@ function SidebarLayout({ user, logout, children }) {
     { title: 'Admins', path: '/admins', icon: ShieldCheck },
     { title: 'Mentors', path: '/mentors', icon: Compass },
     { title: 'Tutors', path: '/tutors', icon: Presentation },
-    { title: 'Invitations', path: '/invitations/create', icon: Mail },
+    { title: 'Invitations', path: '/invitations', icon: Mail },
   ];
 
+  const applyTheme = (currentTheme) => {
+    const root = document.documentElement;
+    if (currentTheme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    } else if (currentTheme === 'light') {
+      root.classList.add('light');
+      root.classList.remove('dark');
+    } else {
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      if (systemTheme === 'dark') {
+        root.classList.add('dark');
+        root.classList.remove('light');
+      } else {
+        root.classList.add('light');
+        root.classList.remove('dark');
+      }
+    }
+  };
+
+  useEffect(() => {
+    applyTheme(theme);
+    
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemThemeChange = () => {
+      if (theme === 'system') {
+        applyTheme('system');
+      }
+    };
+    
+    mediaQuery.addEventListener('change', handleSystemThemeChange);
+    return () => mediaQuery.removeEventListener('change', handleSystemThemeChange);
+  }, [theme]);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleThemeChange = (newTheme) => {
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  };
+
   return (
-    <div className="min-h-screen flex bg-[#09090b] text-zinc-100">
+    <div className="min-h-screen flex bg-zinc-50 dark:bg-[#050505] text-zinc-900 dark:text-[#ffffff] font-sans antialiased transition-colors duration-200">
       {/* Sidebar */}
-      <aside className="w-64 bg-[#0a0a0c] border-r border-[#1e1e24] flex flex-col shrink-0">
+      <aside className="w-64 bg-white dark:bg-[#0a0a0a] border-r border-zinc-200 dark:border-[rgba(255,255,255,0.08)] flex flex-col shrink-0 transition-colors duration-200">
         {/* Brand */}
-        <div className="h-16 flex items-center gap-3 px-6 border-b border-[#1e1e24]">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-sm">
-            E+
+        <div className="h-16 flex items-center gap-2 px-4 border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] bg-white dark:bg-[#0a0a0a] box-border transition-colors duration-200">
+          <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-[rgba(255,255,255,0.03)] flex items-center justify-center shrink-0 border border-zinc-200/50 dark:border-transparent">
+            <img src="/icon-transparent.png" alt="E+" className="w-6 h-6 object-contain" />
           </div>
-          <div>
-            <h1 className="font-bold text-sm leading-tight text-white m-0">Eduport Plus</h1>
-            <span className="text-[10px] uppercase font-semibold tracking-wider text-indigo-400">Hub</span>
+          <div className="flex flex-col">
+            <h1 className="font-semibold text-sm leading-none text-zinc-900 dark:text-white m-0">Eduport Plus</h1>
+            <span className="text-xs text-zinc-400 dark:text-[#a1a1aa] leading-none mt-0.5">Hub</span>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-1">
-          {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                  isActive
-                    ? 'bg-[#18181b] text-white border border-[#27272a]'
-                    : 'text-zinc-400 hover:bg-[#121214] hover:text-white'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0 text-indigo-400" />
-                {item.title}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 px-2 py-4 space-y-1 bg-white dark:bg-[#0a0a0a] transition-colors duration-200">
+          {menuItems
+            .filter((item) => {
+              if (user?.role === 'TUTOR') {
+                return ['/dashboard', '/students', '/sessions'].includes(item.path);
+              }
+              if (user?.role === 'MENTOR') {
+                return ['/dashboard', '/students', '/sessions', '/tutors', '/mentors', '/invitations'].includes(item.path);
+              }
+              return true; // ADMIN see all
+            })
+            .map((item) => {
+              const isActive = location.pathname === item.path;
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex items-center gap-3 px-3 h-9 rounded-lg text-sm font-medium transition-all ${
+                    isActive
+                      ? 'bg-zinc-100 dark:bg-[rgba(255,255,255,0.08)] text-zinc-900 dark:text-white border border-zinc-200/60 dark:border-[rgba(255,255,255,0.08)]'
+                      : 'text-zinc-600 dark:text-[#d4d4d8] hover:bg-zinc-50 dark:hover:bg-[rgba(255,255,255,0.04)] hover:text-zinc-900 dark:hover:text-white border border-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {item.title}
+                </Link>
+              );
+            })}
         </nav>
 
-        {/* User Info / Logout */}
-        <div className="p-4 border-t border-[#1e1e24] flex items-center justify-between gap-3 bg-[#0c0c0e]">
-          <div className="flex items-center gap-3 overflow-hidden">
-            {user?.avatar_url ? (
-              <img src={user.avatar_url} alt="avatar" className="w-9 h-9 rounded-full bg-zinc-800 object-cover border border-[#27272a]" />
-            ) : (
-              <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center font-semibold text-white">
-                {user?.full_name?.charAt(0) || 'U'}
+        {/* User Info / Logout Button and Dropdown */}
+        <div className="p-3 border-t border-zinc-200 dark:border-[rgba(255,255,255,0.08)] bg-white dark:bg-[#0a0a0a] relative transition-colors duration-200" ref={menuRef}>
+          {menuOpen && (
+            <div className="absolute bottom-[72px] left-3 right-3 bg-white dark:bg-[#111112] border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl p-3 flex flex-col gap-2 z-50 animate-fadeIn">
+              {/* User profile details in popover */}
+              <div className="flex items-center gap-2.5 px-1 py-1">
+                {user?.avatar_url ? (
+                  <img src={user.avatar_url} alt="avatar" className="w-9 h-9 rounded-lg bg-zinc-800 object-cover border border-zinc-200 dark:border-zinc-800" />
+                ) : (
+                  <div className="w-9 h-9 rounded-lg bg-zinc-800 flex items-center justify-center font-semibold text-white shrink-0 text-sm border border-zinc-700">
+                    {user?.full_name?.charAt(0) || 'U'}
+                  </div>
+                )}
+                <div className="overflow-hidden flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-sm font-semibold text-zinc-900 dark:text-white truncate leading-none">{user?.full_name}</span>
+                    <span className="bg-zinc-100 dark:bg-zinc-850 text-zinc-500 dark:text-zinc-400 shrink-0 rounded px-1 py-0.5 text-[10px] font-medium capitalize leading-none border border-zinc-200 dark:border-zinc-800">
+                      {user?.role?.toLowerCase()}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-zinc-500 dark:text-[#a1a1aa] truncate block leading-none">{user?.email}</span>
+                </div>
               </div>
-            )}
-            <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-white truncate m-0">{user?.full_name}</p>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400 block">{user?.role}</span>
+
+              {/* Divider */}
+              <div className="border-t border-zinc-100 dark:border-zinc-800/80 my-1" />
+
+              {/* Log out option */}
+              <button
+                onClick={logout}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900 rounded-lg transition-colors text-left font-medium group"
+              >
+                <LogOut className="w-4 h-4 text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-200 transition-colors" />
+                Log out
+              </button>
+
+              {/* Divider */}
+              <div className="border-t border-zinc-100 dark:border-zinc-800/80 my-1" />
+
+              {/* Theme switcher segment control */}
+              <div className="grid grid-cols-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 rounded-lg p-0.5">
+                <button
+                  type="button"
+                  title="System Theme"
+                  onClick={() => handleThemeChange('system')}
+                  className={`flex items-center justify-center py-1.5 rounded-md transition-all ${
+                    theme === 'system'
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200/50 dark:border-zinc-800'
+                      : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
+                  }`}
+                >
+                  <Monitor className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Light Theme"
+                  onClick={() => handleThemeChange('light')}
+                  className={`flex items-center justify-center py-1.5 rounded-md transition-all ${
+                    theme === 'light'
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200/50 dark:border-zinc-800'
+                      : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
+                  }`}
+                >
+                  <Sun className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Dark Theme"
+                  onClick={() => handleThemeChange('dark')}
+                  className={`flex items-center justify-center py-1.5 rounded-md transition-all ${
+                    theme === 'dark'
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200/50 dark:border-zinc-800'
+                      : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
+                  }`}
+                >
+                  <Moon className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Trigger button/card */}
           <button
-            onClick={logout}
-            className="p-2 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
-            title="Log Out"
+            type="button"
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="w-full flex items-center justify-between gap-2.5 p-2 rounded-xl border border-zinc-200 dark:border-[rgba(255,255,255,0.06)] bg-zinc-50/50 dark:bg-zinc-900/10 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-[rgba(255,255,255,0.12)] transition-all cursor-pointer select-none text-left"
           >
-            <LogOut className="w-4 h-4" />
+            <div className="flex items-center gap-2.5 overflow-hidden min-w-0">
+              {user?.avatar_url ? (
+                <img src={user.avatar_url} alt="avatar" className="w-8 h-8 rounded-lg bg-zinc-850 object-cover border border-zinc-200 dark:border-[rgba(255,255,255,0.08)]" />
+              ) : (
+                <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center font-semibold text-white shrink-0 text-xs border border-zinc-700">
+                  {user?.full_name?.charAt(0) || 'U'}
+                </div>
+              )}
+              <div className="overflow-hidden flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-medium text-zinc-900 dark:text-white truncate leading-none">{user?.full_name}</span>
+                  <span className="bg-zinc-150 dark:bg-[#1e1e24] text-zinc-500 dark:text-[#a1a1aa] shrink-0 rounded px-1 py-px text-[10px] font-medium capitalize leading-none border border-zinc-200/50 dark:border-transparent">
+                    {user?.role?.toLowerCase()}
+                  </span>
+                </div>
+                <span className="text-[11px] text-zinc-500 dark:text-[#a1a1aa] truncate block leading-none">{user?.email}</span>
+              </div>
+            </div>
+            <ChevronsUpDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-[#0a0a0c] border-b border-[#1e1e24] flex items-center px-8 justify-between">
-          <h2 className="text-lg font-bold text-white m-0">
-            {location.pathname === '/dashboard' ? 'Dashboard' : 'Invitations'}
+      <div className="flex-1 flex flex-col overflow-hidden bg-zinc-50 dark:bg-[#050505] transition-colors duration-200">
+        <header className="h-16 bg-white dark:bg-[#050505] border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] flex items-center px-6 justify-between transition-colors duration-200">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-white m-0">
+            {location.pathname === '/dashboard' 
+              ? 'Dashboard' 
+              : location.pathname === '/students'
+                ? 'Students'
+                : location.pathname === '/admins'
+                  ? 'Admins'
+                  : location.pathname === '/mentors'
+                    ? 'Mentors'
+                    : location.pathname === '/tutors'
+                      ? 'Tutors'
+                      : 'Invitations'}
           </h2>
         </header>
-        <main className="flex-1 overflow-y-auto p-8 bg-[#09090b]">{children}</main>
+        <main className="flex-1 overflow-y-auto p-6 bg-zinc-50 dark:bg-[#050505] transition-colors duration-200">{children}</main>
       </div>
     </div>
   );
 }
 
+// Global flag to track Google Sign-In initialization
+let hubGsiInitialized = false;
+
 // Login Page - Premium Dark Theme Center Card
 function Login() {
   const [error, setError] = useState('');
+  const [accessRestricted, setAccessRestricted] = useState(false);
   const [mockEmail, setMockEmail] = useState('');
   const [mockName, setMockName] = useState('');
   const [mockRole, setMockRole] = useState('ADMIN');
@@ -168,19 +337,24 @@ function Login() {
 
   // Initialize Native Google One Tap / Sign In if available
   useEffect(() => {
-    const initGsi = () => {
-      if (window.google) {
-        setGsiLoaded(true);
-        const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
+    if (gsiLoaded && !accessRestricted) {
+      const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
 
-        console.log("Origin:", window.location.origin);
-        console.log("Client ID:", clientId);
+      console.log("Origin:", window.location.origin);
+      console.log("Client ID:", clientId);
+      
+      if (!hubGsiInitialized) {
         window.google.accounts.id.initialize({
           client_id: clientId,
           callback: handleGoogleCredentialResponse,
         });
+        hubGsiInitialized = true;
+      }
+
+      const btnEl = document.getElementById('google-signin-btn');
+      if (btnEl) {
         window.google.accounts.id.renderButton(
-          document.getElementById('google-signin-btn'),
+          btnEl,
           { 
             theme: 'filled_black', 
             size: 'large', 
@@ -190,21 +364,23 @@ function Login() {
             logo_alignment: 'left'
           }
         );
-        window.google.accounts.id.prompt(); // Trigger Google One Tap
       }
-    };
-
-    if (window.google) {
-      initGsi();
-    } else {
-      const interval = setInterval(() => {
-        if (window.google) {
-          initGsi();
-          clearInterval(interval);
-        }
-      }, 100);
-      return () => clearInterval(interval);
+      window.google.accounts.id.prompt(); // Trigger Google One Tap
     }
+  }, [gsiLoaded, accessRestricted]);
+
+  useEffect(() => {
+    if (window.google) {
+      setGsiLoaded(true);
+      return;
+    }
+    const interval = setInterval(() => {
+      if (window.google) {
+        setGsiLoaded(true);
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
   }, []);
 
   const handleGoogleCredentialResponse = async (response) => {
@@ -218,7 +394,11 @@ function Login() {
         window.location.href = '/dashboard';
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Please verify whitelist invitation.');
+      if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+        setAccessRestricted(true);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Please verify whitelist invitation.');
+      }
     } finally {
       setLoading(false);
     }
@@ -243,7 +423,11 @@ function Login() {
             }
           })
           .catch((err) => {
-            setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+            if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+              setAccessRestricted(true);
+            } else {
+              setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+            }
             setLoading(false);
           });
       }
@@ -269,16 +453,49 @@ function Login() {
         window.location.href = '/dashboard';
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+      if (err.response?.data?.error === 'ACCESS_RESTRICTED') {
+        setAccessRestricted(true);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Whitelist invitation required.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  if (accessRestricted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
+        <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-red-950/30 border border-red-800/30 flex items-center justify-center text-red-500 mb-6">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-white tracking-tight">Access Restricted</h2>
+          
+          <div className="text-zinc-400 mt-4 text-sm leading-relaxed space-y-4">
+            <p>Your email is not authorized to access EduPlus.</p>
+            <p>Please contact your administrator for access.</p>
+          </div>
+          
+          <button
+            onClick={() => {
+              setAccessRestricted(false);
+              setError('');
+            }}
+            className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-semibold transition-colors mt-8"
+          >
+            Try Another Account
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#070708] px-4 font-sans text-zinc-100">
       <div className="w-full max-w-[400px] bg-[#121214] border border-[#1e1e24] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 flex flex-col items-center">
+          <img src="/brand/logo.svg" alt="Eduport Plus" className="h-10 w-auto mb-4 object-contain" />
           <h2 
             className="text-2xl font-bold text-white tracking-tight cursor-pointer select-none" 
             onDoubleClick={() => setShowMock(prev => !prev)}
@@ -290,16 +507,18 @@ function Login() {
         </div>
 
         {error && (
-          <div className="w-full bg-red-950/50 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50">
+          <div className="w-full bg-red-950/50 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50 whitespace-pre-line">
             {error}
           </div>
         )}
 
         <div className="w-full space-y-6 flex flex-col items-center">
-          {gsiLoaded ? (
-            /* Real Google Sign In container */
-            <div id="google-signin-btn" className="w-full flex justify-center"></div>
-          ) : (
+          <div 
+            id="google-signin-btn" 
+            className="w-full flex justify-center"
+            style={{ display: gsiLoaded ? 'flex' : 'none' }}
+          ></div>
+          {!gsiLoaded && (
             /* Custom Styled Google OAuth Button (Pill Style) Fallback */
             <button
               onClick={handleGoogleSignInFallback}
@@ -421,448 +640,144 @@ function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 bg-[#09090b]">
+      <div className="flex items-center justify-center h-64 bg-[#050505]">
         <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
       </div>
     );
   }
 
   const statCards = [
-    { title: 'Total Enrollments', value: stats?.students ?? 0, icon: GraduationCap, color: 'text-indigo-400 bg-indigo-950/20 border-indigo-900/50' },
-    { title: 'Active Househoulds', value: stats?.students ?? 0, icon: Compass, color: 'text-sky-400 bg-sky-950/20 border-sky-900/50' }, // Student list as Active Households
-    { title: 'Pending Invites', value: stats?.pending_invitations ?? 0, icon: Mail, color: 'text-amber-400 bg-amber-950/20 border-amber-900/50' },
+    { title: 'Total Enrollments', value: stats?.students ?? 0 },
+    { title: 'Active Households', value: stats?.students ?? 0 }, // Student list as Active Households
+    { title: 'Pending Invites', value: stats?.pending_invitations ?? 0 },
+  ];
+
+  // Helper to generate dynamic days for last 7 days chart
+  const generateChartData = () => {
+    const data = [];
+    const now = new Date();
+    const mockValues = [1, 2, 0, 4, 5, 1, 2];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(now.getDate() - i);
+      const dayName = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      data.push({
+        day: dayName,
+        signups: mockValues[6 - i]
+      });
+    }
+    return data;
+  };
+
+  const chartData = generateChartData();
+
+  const recentSignups = [
+    { student_code: 'EDP00041', full_name: 'Dona', created_at: '2026-06-17T12:00:00Z' },
+    { student_code: 'EDP00009', full_name: 'Ahmad Zayan', created_at: '2026-06-16T12:00:00Z' },
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="flex flex-col gap-6 w-full max-w-full box-border">
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {statCards.map((card, idx) => {
-          const Icon = card.icon;
-          return (
-            <div key={idx} className="bg-[#121214] p-6 rounded-xl shadow-sm border border-[#1e1e24] flex items-center gap-5">
-              <div className={`p-4 rounded-xl border ${card.color} shrink-0`}>
-                <Icon className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest m-0">{card.title}</p>
-                <h3 className="text-3xl font-extrabold text-white mt-1.5 m-0">{card.value}</h3>
-              </div>
-            </div>
-          );
-        })}
+        {statCards.map((card, idx) => (
+          <div 
+            key={idx} 
+            className="bg-white dark:bg-[#111111] p-6 h-[106px] rounded-xl border border-zinc-200 dark:border-[rgba(255,255,255,0.08)] flex flex-col justify-between box-border transition-colors duration-200"
+          >
+            <p className="text-sm font-normal text-zinc-500 dark:text-[#a1a1aa] m-0 leading-normal">{card.title}</p>
+            <h3 className="text-3xl font-semibold text-zinc-950 dark:text-white m-0 leading-none tabular-nums">{card.value}</h3>
+          </div>
+        ))}
       </div>
 
       {/* Main Stats sections */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Signups over last 7 days chart mockup */}
-        <div className="bg-[#121214] border border-[#1e1e24] p-6 rounded-xl">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">New Enrollments</h3>
-          <p className="text-xs text-zinc-500 mb-6">Student sign-ups over the last 7 days</p>
-          <div className="h-48 flex items-end justify-around border-b border-[#1e1e24] pb-2 text-zinc-500 text-xs">
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-zinc-800 rounded-t-sm h-4"></div>
-              <span>Jun 13</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-zinc-800 rounded-t-sm h-6"></div>
-              <span>Jun 14</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-zinc-800 rounded-t-sm h-2"></div>
-              <span>Jun 15</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-indigo-600 rounded-t-sm h-16"></div>
-              <span>Jun 16</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-indigo-600 rounded-t-sm h-20"></div>
-              <span>Jun 17</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-zinc-800 rounded-t-sm h-3"></div>
-              <span>Jun 18</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 bg-zinc-800 rounded-t-sm h-5"></div>
-              <span>Jun 19</span>
-            </div>
+        {/* Recharts Bar Chart Card */}
+        <div className="bg-white dark:bg-[#111111] border border-zinc-200 dark:border-[rgba(255,255,255,0.08)] p-6 rounded-xl flex flex-col box-border transition-colors duration-200">
+          <h3 className="text-base font-semibold text-zinc-900 dark:text-white m-0 leading-none">New Enrollments</h3>
+          <p className="text-sm text-zinc-500 dark:text-[#a1a1aa] mt-1.5 mb-6">Student sign-ups over the last 7 days</p>
+          <div className="h-[240px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chartData}
+                margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+              >
+                <CartesianGrid
+                  vertical={false}
+                  stroke="var(--chart-grid)"
+                  strokeDasharray="3 3"
+                />
+                <XAxis
+                  dataKey="day"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  tick={{ fill: 'var(--chart-text)', fontSize: 12 }}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  allowDecimals={false}
+                  tickMargin={8}
+                  tick={{ fill: 'var(--chart-text)', fontSize: 12 }}
+                />
+                <Tooltip
+                  cursor={{ fill: 'var(--chart-grid)' }}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      return (
+                        <div className="bg-white dark:bg-[#111111] border border-zinc-200 dark:border-[rgba(255,255,255,0.08)] p-2 rounded-lg text-xs text-zinc-900 dark:text-white shadow-md">
+                          <p>{`Sign-ups: ${payload[0].value}`}</p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar
+                  dataKey="signups"
+                  fill="var(--chart-bar)"
+                  radius={[6, 6, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
         {/* Recent signup listings */}
-        <div className="bg-[#121214] border border-[#1e1e24] p-6 rounded-xl flex flex-col">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">Recent Sign-ups</h3>
-          <p className="text-xs text-zinc-500 mb-6">The last 5 students who enrolled</p>
+        <div className="bg-white dark:bg-[#111111] border border-zinc-200 dark:border-[rgba(255,255,255,0.08)] p-6 rounded-xl flex flex-col box-border transition-colors duration-200">
+          <h3 className="text-base font-semibold text-zinc-900 dark:text-white m-0 leading-none">Recent Sign-ups</h3>
+          <p className="text-sm text-zinc-500 dark:text-[#a1a1aa] mt-1.5 mb-6">The last 5 students who enrolled</p>
           
-          <div className="flex-1 overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <div className="flex-grow overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
               <thead>
-                <tr className="border-b border-[#1e1e24] text-zinc-400 font-semibold uppercase tracking-wider">
-                  <th className="py-2.5">Student ID</th>
-                  <th className="py-2.5">Name</th>
-                  <th className="py-2.5 text-right">Joined At</th>
+                <tr className="border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)]">
+                  <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-left align-middle">Student ID</th>
+                  <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-left align-middle">Name</th>
+                  <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-right align-middle">Joined At</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1e1e24]/50">
-                <tr className="text-zinc-300">
-                  <td className="py-3 text-zinc-500 font-mono font-medium">EDP00041</td>
-                  <td className="py-3 font-semibold text-white">Dona</td>
-                  <td className="py-3 text-right text-zinc-400">Jun 17, 2026</td>
-                </tr>
-                <tr className="text-zinc-300">
-                  <td className="py-3 text-zinc-500 font-mono font-medium">EDP00009</td>
-                  <td className="py-3 font-semibold text-white">Ahmad Zayan</td>
-                  <td className="py-3 text-right text-zinc-400">Jun 16, 2026</td>
-                </tr>
+              <tbody>
+                {recentSignups.map((s) => (
+                  <tr key={s.student_code} className="hover:bg-zinc-50/50 dark:hover:bg-[rgba(255,255,255,0.03)] border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] h-[44px] transition-colors">
+                    <td className="py-2 px-4 text-zinc-500 dark:text-[#71717A] font-mono text-xs align-middle">{s.student_code}</td>
+                    <td className="py-2 px-4 font-medium text-zinc-900 dark:text-white text-sm align-middle">{s.full_name}</td>
+                    <td className="py-2 px-4 text-right text-zinc-500 dark:text-[#a1a1aa] text-sm font-normal align-middle">
+                      {new Date(s.created_at).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Create Invitation Page (Role Dropdown: Admin, Mentor, Tutor, Student)
-function CreateInvitation() {
-  const [role, setRole] = useState('STUDENT');
-  const [email, setEmail] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [studentCode, setStudentCode] = useState('');
-  const [verifying, setVerifying] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  const [studentInfo, setStudentInfo] = useState(null);
-  const [mentors, setMentors] = useState([]);
-  const [tutors, setTutors] = useState([]);
-
-  // Form Fields
-  const [selectedMentor, setSelectedMentor] = useState('');
-  const [selectedTutor, setSelectedTutor] = useState('');
-  const [meetLink, setMeetLink] = useState('');
-  const [whatsappCreated, setWhatsappCreated] = useState(false);
-
-  // Fetch staff dropdown lists once
-  const loadStaffLists = async () => {
-    try {
-      const [mentorsRes, tutorsRes] = await Promise.all([
-        api.get('/api/mentors/'),
-        api.get('/api/tutors/')
-      ]);
-      setMentors(mentorsRes.data.mentors || []);
-      setTutors(tutorsRes.data.tutors || []);
-    } catch (err) {
-      console.error('Failed to load staff lists', err);
-    }
-  };
-
-  useEffect(() => {
-    if (role === 'STUDENT') {
-      loadStaffLists();
-    }
-    // Clear forms on role shift
-    setEmail('');
-    setFullName('');
-    setStudentCode('');
-    setStudentInfo(null);
-    setSelectedMentor('');
-    setSelectedTutor('');
-    setMeetLink('');
-    setWhatsappCreated(false);
-    setError('');
-    setSuccess('');
-  }, [role]);
-
-  const handleLookup = async (e) => {
-    e.preventDefault();
-    if (!studentCode.trim()) {
-      setError('Please provide a student code.');
-      return;
-    }
-    setVerifying(true);
-    setError('');
-    setSuccess('');
-    setStudentInfo(null);
-
-    try {
-      const lookupRes = await api.post('/api/invitations/lookup-student/', { student_code: studentCode.trim() });
-      const data = lookupRes.data.student_data;
-      setStudentInfo(data);
-      setEmail(data.email);
-      setFullName(data.full_name);
-
-      // Pre-select tutor if tutor_name matches
-      const sheetTutorName = (data.tutor_name || '').trim().toLowerCase();
-      if (sheetTutorName) {
-        const matchedTutor = tutors.find(
-          (t) => (t.full_name || '').trim().toLowerCase() === sheetTutorName
-        );
-        if (matchedTutor) {
-          setSelectedTutor(matchedTutor.id);
-        }
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || 'Student code lookup failed. Verify Sheets data.');
-    } finally {
-      setVerifying(false);
-    }
-  };
-
-  const handleInvite = async (e) => {
-    e.preventDefault();
-    if (!email.trim()) {
-      setError('Please enter a whitelisted email.');
-      return;
-    }
-    if (role === 'STUDENT' && !studentInfo) {
-      setError('Please search and verify student code first.');
-      return;
-    }
-    if (role === 'STUDENT' && meetLink && !/^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(meetLink.trim())) {
-      setError('Google Meet Link must be valid (e.g. https://meet.google.com/abc-defg-hij).');
-      return;
-    }
-    setSubmitting(true);
-    setError('');
-
-    try {
-      const payload = {
-        role,
-        email: email.trim().toLowerCase(),
-        full_name: fullName.trim() || email.split('@')[0],
-      };
-
-      if (role === 'STUDENT') {
-        payload.student_code = studentInfo.student_code;
-        payload.mobile_number = studentInfo.mobile_number;
-        payload.country = studentInfo.country;
-        payload.state = studentInfo.state;
-        payload.school_name = studentInfo.school_name;
-        payload.grade = studentInfo.grade;
-        payload.syllabus = studentInfo.syllabus;
-        payload.admission_date = studentInfo.admission_date;
-        payload.remarks = studentInfo.remarks;
-        payload.mentor_id = selectedMentor || null;
-        payload.tutor_id = selectedTutor || null;
-        payload.meet_link = meetLink.trim() || null;
-      }
-
-      await api.post('/api/invitations/', payload);
-
-      setSuccess(`Invitation created successfully for ${payload.full_name} (${role})!`);
-      // Reset
-      setEmail('');
-      setFullName('');
-      setStudentCode('');
-      setStudentInfo(null);
-      setSelectedMentor('');
-      setSelectedTutor('');
-      setMeetLink('');
-      setWhatsappCreated(false);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to create whitelist invitation.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="max-w-2xl bg-[#121214] border border-[#1e1e24] rounded-xl shadow-sm p-8 mx-auto">
-      <div className="mb-6">
-        <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Role Type</label>
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="w-full px-3 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-[#1a1a1e] transition-all"
-        >
-          <option value="STUDENT">Student (lookup sheet)</option>
-          <option value="MENTOR">Mentor (direct invite)</option>
-          <option value="TUTOR">Tutor (direct invite)</option>
-          <option value="ADMIN">Admin (direct invite)</option>
-        </select>
-      </div>
-
-      {error && (
-        <div className="bg-red-950/40 text-red-400 text-xs p-3 rounded-lg mb-6 border border-red-900/50">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="bg-emerald-950/40 text-emerald-400 text-xs p-3 rounded-lg mb-6 border border-emerald-900/50 flex items-center gap-2 font-medium">
-          <Check className="w-4 h-4 shrink-0 text-emerald-400" />
-          {success}
-        </div>
-      )}
-
-      {/* Code Verification Step (Only for Students) */}
-      {role === 'STUDENT' && (
-        <form onSubmit={handleLookup} className="flex gap-4 items-end mb-8">
-          <div className="flex-1">
-            <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Student Code</label>
-            <input
-              type="text"
-              value={studentCode}
-              onChange={(e) => setStudentCode(e.target.value)}
-              placeholder="EDP00009"
-              className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all uppercase"
-              disabled={verifying || submitting}
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={verifying || submitting || !studentCode.trim()}
-            className="h-11 px-6 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-          >
-            {verifying ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Searching...
-              </>
-            ) : (
-              'Verify Code'
-            )}
-          </button>
-        </form>
-      )}
-
-      {/* Direct Invitation Form (For Admin, Mentor, Tutor) or Verified Student form */}
-      {(role !== 'STUDENT' || studentInfo) && (
-        <form onSubmit={handleInvite} className="space-y-6 pt-6 border-t border-[#1e1e24]/70">
-          {studentInfo && (
-            <div className="bg-indigo-950/20 rounded-xl p-5 border border-indigo-900/40 grid grid-cols-2 gap-4">
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Full Name</span>
-                <p className="text-white font-semibold mt-0.5 m-0">{studentInfo.full_name}</p>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Email Address</span>
-                <p className="text-white font-semibold mt-0.5 m-0">{studentInfo.email}</p>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Grade & Syllabus</span>
-                <p className="text-zinc-300 font-medium mt-0.5 m-0">{studentInfo.grade} - {studentInfo.syllabus}</p>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Tutor Name (Sheet)</span>
-                <p className="text-zinc-300 font-medium mt-0.5 m-0">{studentInfo.tutor_name || '—'}</p>
-              </div>
-            </div>
-          )}
-
-          {role !== 'STUDENT' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Email Address</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@gmail.com"
-                  className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Full Name</label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Staff Full Name"
-                  className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                />
-              </div>
-            </div>
-          )}
-
-          {role === 'STUDENT' && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Assign Mentor</label>
-                  <select
-                    value={selectedMentor}
-                    onChange={(e) => setSelectedMentor(e.target.value)}
-                    className="w-full px-3 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    required
-                  >
-                    <option value="">Select Mentor...</option>
-                    {mentors.map((m) => (
-                      <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Assign Tutor</label>
-                  <select
-                    value={selectedTutor}
-                    onChange={(e) => setSelectedTutor(e.target.value)}
-                    className="w-full px-3 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    required
-                  >
-                    <option value="">Select Tutor...</option>
-                    {tutors.map((t) => (
-                      <option key={t.id} value={t.id}>{t.full_name || t.email}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Google Meet Link</label>
-                <input
-                  type="url"
-                  value={meetLink}
-                  onChange={(e) => setMeetLink(e.target.value)}
-                  placeholder="https://meet.google.com/abc-defg-hij"
-                  className="w-full px-4 h-11 bg-[#1a1a1e] border border-[#27272a] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                  required
-                />
-                <p className="text-zinc-500 flex items-start gap-1.5 text-xs mt-2 leading-relaxed">
-                  <Info className="w-3.5 h-3.5 mt-0.5 text-indigo-400 shrink-0" />
-                  <span>
-                    Make sure the classroom setting is set to <strong>Open</strong> so the student can join.
-                  </span>
-                </p>
-              </div>
-
-              <label className="flex items-start gap-3 select-none">
-                <input
-                  type="checkbox"
-                  checked={whatsappCreated}
-                  onChange={(e) => setWhatsappCreated(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-[#1a1a1e] text-indigo-600 focus:ring-indigo-500"
-                  required
-                />
-                <span className="text-sm text-zinc-400 leading-normal">
-                  Have you created the WhatsApp group for this student? (Required to submit)
-                </span>
-              </label>
-            </>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting || (role === 'STUDENT' && !whatsappCreated)}
-            className="w-full h-11 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 shadow-md disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Inviting...
-              </>
-            ) : (
-              'Create Whitelist Invitation'
-            )}
-          </button>
-        </form>
-      )}
     </div>
   );
 }
@@ -881,7 +796,11 @@ export default function App() {
                 <SidebarLayout user={user} logout={logout}>
                   <Routes>
                     <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/invitations/create" element={<CreateInvitation />} />
+                    <Route path="/students" element={<StudentsPage />} />
+                    <Route path="/admins" element={user?.role === 'ADMIN' ? <AdminsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/mentors" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <MentorsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/tutors" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <TutorsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/invitations" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <InvitationsPage /> : <Navigate to="/dashboard" replace />} />
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 </SidebarLayout>

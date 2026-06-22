@@ -16,4 +16,25 @@ class UserAdmin(admin.ModelAdmin):
     )
     readonly_fields = ('created_at', 'updated_at')
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # Auto-create whitelist invitation for users created/saved via Django Admin
+        try:
+            from invitations.models import Invitation, InvitationStatusChoices
+            if not Invitation.objects.filter(email=obj.email).exists():
+                Invitation.objects.create(
+                    email=obj.email,
+                    role=obj.role,
+                    status=InvitationStatusChoices.ACCEPTED,
+                    invited_by=obj.invited_by or request.user,
+                    extra_data={
+                        "full_name": obj.full_name or "",
+                        "mobile_number": obj.mobile_number or ""
+                    }
+                )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to auto-create whitelist invitation in Admin for {obj.email}: {e}")
+
 admin.site.register(User, UserAdmin)

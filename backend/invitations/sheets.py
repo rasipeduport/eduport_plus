@@ -96,3 +96,5 @@ class GoogleSheetsService:
 
         logger.warning(f"Student code '{student_code}' not found in 'enrollment data' worksheet range A3:AB.")
         return None
+
+

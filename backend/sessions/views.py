@@ -1,3 +1,563 @@
-from django.shortcuts import render
+import uuid
+import logging
+from datetime import datetime, timedelta
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from django.contrib.auth import get_user_model
+from rest_framework import status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, BasePermission
 
-# Create your views here.
+from students.models import Student
+from activity.utils import log_activity
+from .models import Session, SessionStatusChoices
+from .serializers import SessionSerializer
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+ALLOWED_DURATIONS = [0.5, 1, 1.5, 2]
+MAX_SERIES_ITEMS = 20
+
+def normalize_title(title):
+    if not title:
+        return ""
+    return " ".join(title.split())
+
+def parse_iso_datetime(dt_str):
+    try:
+        # standard ISO format: 2026-06-17T12:00:00Z -> timezone-aware datetime
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        # Make sure it is timezone-aware
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+class IsStaffOrSelfStudent(BasePermission):
+    """
+    Allow staff roles full access; students can only retrieve/GET their own sessions.
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Staff roles
+        if request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser:
+            return True
+            
+        # Student role: GET only
+        if request.user.role == 'STUDENT' and request.method == 'GET':
+            return True
+            
+        return False
+
+class SessionsView(APIView):
+    """
+    GET: List sessions.
+    POST: Create one or more sessions.
+    PUT: Update a single session.
+    """
+    permission_classes = [IsAuthenticated, IsStaffOrSelfStudent]
+
+    def get(self, request, *args, **kwargs):
+        queryset = Session.objects.all().order_by('-start_time')
+        
+        # If the requester is a student, restrict to their own sessions
+        if request.user.role == 'STUDENT':
+            student = Student.objects.filter(profile=request.user).first()
+            if not student:
+                return Response({"sessions": []}, status=status.HTTP_200_OK)
+            queryset = queryset.filter(student=student)
+
+        serializer = SessionSerializer(queryset, many=True)
+        return Response({"sessions": serializer.data}, status=status.HTTP_200_OK)
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        student_id = data.get("student_id")
+        base_title = data.get("base_title")
+        series = data.get("series", False)
+        items = data.get("items")
+
+        if not student_id or not base_title or not isinstance(items, list):
+            return Response(
+                {"error": "student_id, base_title, and items are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        normalized_base = normalize_title(base_title)
+        if not normalized_base:
+            return Response(
+                {"error": "base_title cannot be empty"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        is_series = bool(series)
+
+        if len(items) == 0:
+            return Response(
+                {"error": "At least one class is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not is_series and len(items) != 1:
+            return Response(
+                {"error": "Non-series submissions must contain exactly one class"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if len(items) > MAX_SERIES_ITEMS:
+            return Response(
+                {"error": f"A series can contain at most {MAX_SERIES_ITEMS} classes"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1. Fetch Student profile
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response(
+                {"error": "Student not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not student.tutor:
+            return Response(
+                {"error": "This student has no tutor assigned. Assign a tutor before creating a session."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate items and calculate total requested hours
+        validated_items = []
+        series_total = 0.0
+        for i, item in enumerate(items):
+            label = f"Class {i + 1}" if is_series else "class"
+            duration = item.get("duration_hours")
+            
+            # Check duration is valid
+            if not isinstance(duration, (int, float)) or duration not in ALLOWED_DURATIONS:
+                return Response(
+                    {"error": f"{label}: duration_hours must be 0.5, 1, 1.5, or 2"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            start_time_str = item.get("start_time")
+            if not start_time_str:
+                return Response(
+                    {"error": f"{label}: start_time is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            start_time = parse_iso_datetime(start_time_str)
+            if not start_time:
+                return Response(
+                    {"error": f"{label}: start_time is not a valid date"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            end_time = start_time + timedelta(hours=duration)
+            validated_items.append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_hours": duration
+            })
+            series_total += float(duration)
+
+        # 2. Check Quota Balance
+        existing_sessions = Session.objects.filter(student=student).exclude(status=SessionStatusChoices.CANCELLED)
+        credits_used = 0.0
+        for s in existing_sessions:
+            credits_used += (s.end_time - s.start_time).total_seconds() / 3600.0
+
+        total_quota = float(student.total_class_quota)
+        remaining = total_quota - credits_used
+
+        if series_total > remaining + 1e-9:
+            return Response(
+                {"error": f"This {'series' if is_series else 'session'} needs {series_total} credits but only {remaining:.2f} remain."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Conflict Checks (overlap check: start_time < other.end_time and end_time > other.start_time)
+        # Filters: Same student OR same tutor
+        for i, v in enumerate(validated_items):
+            label = f"Class {i + 1}" if is_series else "This session"
+            conflicts = Session.objects.filter(
+                ~Q(status=SessionStatusChoices.CANCELLED),
+                Q(student=student) | Q(tutor=student.tutor),
+                start_time__lt=v["end_time"],
+                end_time__gt=v["start_time"]
+            )
+            
+            if conflicts.exists():
+                conflict = conflicts.first()
+                return Response(
+                    {"error": f"{label} conflicts with \"{conflict.title}\". Choose a different time."},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+        # 4. Save sessions
+        series_id = uuid.uuid4() if is_series else None
+        created_sessions = []
+        
+        with transaction.atomic():
+            for idx, v in enumerate(validated_items):
+                sess = Session.objects.create(
+                    student=student,
+                    start_time=v["start_time"],
+                    end_time=v["end_time"],
+                    title=f"{normalized_base} - Class {idx + 1}" if is_series else normalized_base,
+                    tutor=student.tutor,
+                    series_id=series_id,
+                    class_number=idx + 1 if is_series else None,
+                    status=SessionStatusChoices.SCHEDULED
+                )
+                created_sessions.append(sess)
+
+        # 5. Log Activity
+        if created_sessions:
+            series_create = is_series and len(created_sessions) > 1
+            log_activity(
+                action='session.create_series' if series_create else 'session.create',
+                entity_type='session',
+                entity_id=str(series_id if series_create else created_sessions[0].id),
+                entity_label=normalized_base if series_create else created_sessions[0].title,
+                student=student,
+                context={
+                    "count": len(created_sessions),
+                    "series_id": str(series_id) if series_id else None,
+                    "base_title": normalized_base
+                },
+                request=request
+            )
+
+        serializer = SessionSerializer(created_sessions, many=True)
+        return Response({"success": True, "sessions": serializer.data}, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        session_id = data.get("id")
+
+        if not session_id:
+            return Response(
+                {"error": "Session id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            session = Session.objects.get(id=session_id)
+        except Session.DoesNotExist:
+            return Response(
+                {"error": "Session not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check cancellation constraints
+        new_status = data.get("status")
+        if new_status:
+            new_status = new_status.upper()
+            if new_status == 'CANCELLED' and not data.get("cancellation_reason", "").strip():
+                return Response(
+                    {"error": "A cancellation reason is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Capture state before modifications
+        before_state = {
+            "status": session.status,
+            "title": session.title,
+            "tutor": str(session.tutor.id) if session.tutor else None,
+            "start_time": session.start_time.isoformat(),
+            "end_time": session.end_time.isoformat(),
+            "recording_link": session.recording_link,
+            "notes_link": session.notes_link,
+            "homework_link": session.homework_link,
+            "rating": session.rating,
+            "cancellation_reason": session.cancellation_reason
+        }
+
+        # Resolve end_time math if start_time and duration_hours are specified together
+        start_time_str = data.get("start_time")
+        duration = data.get("duration_hours")
+        new_start_time = None
+        new_end_time = None
+
+        if start_time_str and duration is not None:
+            if duration not in ALLOWED_DURATIONS:
+                return Response(
+                    {"error": "duration_hours must be 0.5, 1, 1.5, or 2"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            new_start_time = parse_iso_datetime(start_time_str)
+            if not new_start_time:
+                return Response(
+                    {"error": "start_time is not a valid date"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            new_end_time = new_start_time + timedelta(hours=duration)
+
+        # Check Scheduling Conflicts on Rescheduling
+        if new_start_time and new_end_time:
+            # Overlap filters: same student OR same tutor of the session
+            conflict_filters = Q(student=session.student)
+            if session.tutor:
+                conflict_filters |= Q(tutor=session.tutor)
+            
+            conflicts = Session.objects.filter(
+                ~Q(status=SessionStatusChoices.CANCELLED),
+                conflict_filters,
+                start_time__lt=new_end_time,
+                end_time__gt=new_start_time
+            ).exclude(id=session.id)
+
+            if conflicts.exists():
+                conflict = conflicts.first()
+                return Response(
+                    {"error": f"Time conflict with \"{conflict.title}\". Choose a different time."},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+        # Apply Updates
+        allowed_fields = [
+            'status', 'title', 'tutor', 'recording_link', 'notes_link',
+            'homework_link', 'rating', 'cancellation_reason'
+        ]
+        
+        with transaction.atomic():
+            if new_start_time and new_end_time:
+                session.start_time = new_start_time
+                session.end_time = new_end_time
+
+            for field in allowed_fields:
+                if field in data:
+                    val = data[field]
+                    if field == 'status' and val:
+                        session.status = val.upper()
+                    elif field == 'tutor':
+                        if val is None:
+                            session.tutor = None
+                        else:
+                            try:
+                                session.tutor = User.objects.get(id=val)
+                            except User.DoesNotExist:
+                                return Response(
+                                    {"error": f"Tutor with ID '{val}' not found"},
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+                    elif field == 'title' and val:
+                        session.title = normalize_title(val)
+                    else:
+                        setattr(session, field, val)
+
+            session.save()
+
+        # Audit Logging
+        action = None
+        if new_status == 'ATTENDED':
+            action = 'session.mark_attended'
+        elif new_status == 'CANCELLED':
+            action = 'session.cancel'
+        elif start_time_str:
+            action = 'session.reschedule'
+        elif any(f in data for f in ('recording_link', 'notes_link', 'homework_link')):
+            action = 'session.update_links'
+        elif 'rating' in data:
+            action = 'session.rate'
+        elif 'title' in data or 'tutor' in data:
+            action = 'session.update'
+
+        changes = {}
+        for key in ['status', 'title', 'tutor', 'start_time', 'end_time', 'recording_link', 'notes_link', 'homework_link', 'rating']:
+            old_val = before_state.get(key)
+            if key == 'start_time' or key == 'end_time':
+                new_val = getattr(session, key).isoformat()
+            elif key == 'tutor':
+                new_val = str(session.tutor.id) if session.tutor else None
+            else:
+                new_val = getattr(session, key)
+
+            if old_val != new_val:
+                changes[key] = {"old": old_val, "new": new_val}
+
+        if action and changes:
+            context = {}
+            if new_status == 'CANCELLED' and session.cancellation_reason:
+                context['reason'] = session.cancellation_reason
+            
+            log_activity(
+                action=action,
+                entity_type='session',
+                entity_id=str(session.id),
+                entity_label=before_state['title'],
+                student=session.student,
+                changes=changes,
+                context=context,
+                request=request
+            )
+
+        serializer = SessionSerializer(session)
+        return Response({"success": True, "session": serializer.data}, status=status.HTTP_200_OK)
+
+class CancelSeriesView(APIView):
+    """
+    POST: Cancel a scheduled class within a series, shifting/renumbering subsequent classes,
+    and appending a make-up class to the end of the series.
+    """
+    permission_classes = [IsAuthenticated, IsStaffOrSelfStudent]
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        session_id = data.get("session_id")
+        cancellation_reason = data.get("cancellation_reason", "").strip()
+        new_last_start_time_str = data.get("new_last_start_time")
+        new_last_duration = data.get("new_last_duration_hours")
+
+        if not session_id:
+            return Response({"error": "session_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not cancellation_reason:
+            return Response({"error": "A cancellation reason is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_session = Session.objects.get(id=session_id)
+        except Session.DoesNotExist:
+            return Response({"error": "Session not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_session.status != SessionStatusChoices.SCHEDULED:
+            return Response({"error": "Only scheduled sessions can be cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+
+        student = target_session.student
+
+        # Helper to log final cancellation audit trail
+        def log_cancel_operation(renumbered_count, new_session_id):
+            changes = {"status": {"old": "scheduled", "new": "cancelled"}}
+            context = {
+                "reason": cancellation_reason,
+                "renumbered_count": renumbered_count,
+                "new_session_id": str(new_session_id) if new_session_id else None,
+                "series_id": str(target_session.series_id) if target_session.series_id else None
+            }
+            log_activity(
+                action='session.cancel_series' if target_session.series_id else 'session.cancel',
+                entity_type='session',
+                entity_id=str(target_session.id),
+                entity_label=target_session.title,
+                student=student,
+                changes=changes,
+                context=context,
+                request=request
+            )
+
+        # Scenario A: No series_id or no class number. Fall back to simple cancellation.
+        if not target_session.series_id or target_session.class_number is None:
+            with transaction.atomic():
+                target_session.status = SessionStatusChoices.CANCELLED
+                target_session.cancellation_reason = cancellation_reason
+                target_session.save()
+            
+            log_cancel_operation(0, None)
+            return Response({"success": True, "renumberedCount": 0, "newSession": None}, status=status.HTTP_200_OK)
+
+        # Scenario B: Part of a series. Fetch subsequent scheduled classes.
+        subsequent = Session.objects.filter(
+            series_id=target_session.series_id,
+            status=SessionStatusChoices.SCHEDULED,
+            class_number__gt=target_session.class_number
+        ).order_by('class_number')
+
+        if not subsequent.exists():
+            with transaction.atomic():
+                target_session.status = SessionStatusChoices.CANCELLED
+                target_session.cancellation_reason = cancellation_reason
+                target_session.save()
+
+            log_cancel_operation(0, None)
+            return Response({"success": True, "renumberedCount": 0, "newSession": None}, status=status.HTTP_200_OK)
+
+        # Validate make-up class inputs (since there is a shift, makeup is required)
+        if not new_last_start_time_str:
+            return Response(
+                {"error": "new_last_start_time is required when renumbering a series"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        new_last_start_time = parse_iso_datetime(new_last_start_time_str)
+        if not new_last_start_time:
+            return Response(
+                {"error": "new_last_start_time is not a valid date"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not isinstance(new_last_duration, (int, float)) or new_last_duration not in ALLOWED_DURATIONS:
+            return Response(
+                {"error": "new_last_duration_hours must be 0.5, 1, 1.5, or 2"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Conflict check for the new make-up session
+        new_last_end_time = new_last_start_time + timedelta(hours=new_last_duration)
+        makeup_conflict_filters = Q(student=student)
+        if student.tutor:
+            makeup_conflict_filters |= Q(tutor=student.tutor)
+        
+        conflicts = Session.objects.filter(
+            ~Q(status=SessionStatusChoices.CANCELLED),
+            makeup_conflict_filters,
+            start_time__lt=new_last_end_time,
+            end_time__gt=new_last_start_time
+        )
+        if conflicts.exists():
+            conflict = conflicts.first()
+            return Response(
+                {"error": f"Make-up class conflicts with \"{conflict.title}\". Choose a different time."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Perform shifting, renumbering, and creation within a database transaction
+        with transaction.atomic():
+            # 1. Cancel target session
+            target_session.status = SessionStatusChoices.CANCELLED
+            target_session.cancellation_reason = cancellation_reason
+            target_session.save()
+
+            # 2. Shift subsequent classes: class_number - 1, and update titles
+            max_original_class_num = subsequent.last().class_number
+            for s in subsequent:
+                old_num = s.class_number
+                new_num = old_num - 1
+                
+                # Replace class number suffix: e.g. "Title - Class 3" -> "Title - Class 2"
+                import re
+                title_base = re.sub(r'\s*-\s*[Cc]lass\s+\d+$', '', s.title)
+                s.title = f"{title_base} - Class {new_num}"
+                s.class_number = new_num
+                s.save()
+
+            # 3. Create the make-up session at the end of the series
+            import re
+            target_base_title = re.sub(r'\s*-\s*[Cc]lass\s+\d+$', '', target_session.title)
+            new_session = Session.objects.create(
+                student=student,
+                tutor=student.tutor,
+                series_id=target_session.series_id,
+                class_number=max_original_class_num,
+                title=f"{target_base_title} - Class {max_original_class_num}",
+                start_time=new_last_start_time,
+                end_time=new_last_end_time,
+                status=SessionStatusChoices.SCHEDULED
+            )
+
+        log_cancel_operation(len(subsequent), new_session.id)
+
+        # Format minimal response shape matching frontend expects
+        return Response({
+            "success": True,
+            "renumberedCount": len(subsequent),
+            "newSession": {
+                "id": str(new_session.id),
+                "title": new_session.title,
+                "start_time": new_session.start_time.isoformat(),
+                "end_time": new_session.end_time.isoformat(),
+                "class_number": new_session.class_number
+            }
+        }, status=status.HTTP_200_OK)
