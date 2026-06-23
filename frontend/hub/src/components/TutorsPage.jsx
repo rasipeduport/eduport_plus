@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { 
-  Loader2, Search, MoreVertical, Plus, Check, X, 
+import {
+  Loader2, Search, Plus,
   ArrowUpDown, ChevronDown, Trash, Mail
 } from 'lucide-react';
+import * as Avatar from '@radix-ui/react-avatar';
 import api from '../lib/api';
 import NewInvitationModal from './NewInvitationModal';
+import StaffActionsDropdown from './StaffActionsDropdown';
 
 export default function TutorsPage() {
   const [tutors, setTutors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
+
   // Table filters and visibility
   const [searchTerm, setSearchTerm] = useState('');
   const [showColumnsDropdown, setShowColumnsDropdown] = useState(false);
@@ -30,13 +32,12 @@ export default function TutorsPage() {
   // Edit / Delete Modal states
   const [modalType, setModalType] = useState(null); // 'edit_details' | 'delete' | 'edit_email' | 'withdraw'
   const [activeTutor, setActiveTutor] = useState(null);
-  const [openDropdownId, setOpenDropdownId] = useState(null);
-  
+
   // Form input states
   const [fullNameVal, setFullNameVal] = useState('');
   const [mobileNumberVal, setMobileNumberVal] = useState('');
   const [editEmailVal, setEditEmailVal] = useState('');
-  
+
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
@@ -70,18 +71,6 @@ export default function TutorsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleOutsideClick = () => setOpenDropdownId(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
-
-  const handleDropdownToggle = (e, id) => {
-    e.stopPropagation();
-    setOpenDropdownId(openDropdownId === id ? null : id);
   };
 
   const openModal = (type, tutor) => {
@@ -189,7 +178,7 @@ export default function TutorsPage() {
   };
 
   // Sorting and filtering
-  const filteredTutors = tutors.filter(tutor => 
+  const filteredTutors = tutors.filter(tutor =>
     tutor.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     tutor.full_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -208,8 +197,8 @@ export default function TutorsPage() {
       if (valB === null || valB === undefined) return sortAsc ? -1 : 1;
 
       if (typeof valA === 'string') {
-        return sortAsc 
-          ? valA.localeCompare(valB) 
+        return sortAsc
+          ? valA.localeCompare(valB)
           : valB.localeCompare(valA);
       } else {
         return sortAsc ? valA - valB : valB - valA;
@@ -260,8 +249,8 @@ export default function TutorsPage() {
                   Toggle Columns
                 </div>
                 {Object.keys(visibleColumns).map(col => (
-                  <label 
-                    key={col} 
+                  <label
+                    key={col}
                     className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-xs text-zinc-300 hover:text-white"
                   >
                     <input
@@ -296,8 +285,7 @@ export default function TutorsPage() {
       )}
 
       {/* Tutors Table */}
-      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl overflow-hidden shadow-xl">
-        <div className="overflow-x-auto w-full">
+      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl shadow-xl overflow-x-auto w-full">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-[rgba(255,255,255,0.08)] bg-[#0f0f0f]">
@@ -345,7 +333,7 @@ export default function TutorsPage() {
                     </button>
                   </th>
                 )}
-                <th className="h-12 px-6 w-10"></th>
+                <th className="h-12 px-2 w-10 sticky right-0 bg-[#0f0f0f] border-l border-[rgba(255,255,255,0.08)] z-20"></th>
               </tr>
             </thead>
             <tbody>
@@ -359,9 +347,9 @@ export default function TutorsPage() {
                 getSortedData(filteredTutors).map(tutor => {
                   const initials = tutor.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2) || 'T';
                   return (
-                    <tr 
-                      key={tutor.id} 
-                      className="hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
+                    <tr
+                      key={tutor.id}
+                      className="group hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
                     >
                       {visibleColumns.avatar && (
                         <td className="py-2 px-6 align-middle">
@@ -369,16 +357,17 @@ export default function TutorsPage() {
                             <div className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center border border-zinc-700/50">
                               <Mail className="w-4 h-4" />
                             </div>
-                          ) : tutor.avatar_url ? (
-                            <img 
-                              src={tutor.avatar_url} 
-                              alt={tutor.full_name} 
-                              className="w-8 h-8 rounded-full object-cover border border-[rgba(255,255,255,0.1)]"
-                            />
                           ) : (
-                            <div className="w-8 h-8 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-900/50 flex items-center justify-center font-semibold text-xs">
-                              {initials}
-                            </div>
+                            <Avatar.Root className="relative flex h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[rgba(255,255,255,0.1)]">
+                              <Avatar.Image
+                                src={tutor.avatar_url || undefined}
+                                alt={tutor.full_name}
+                                className="aspect-square h-full w-full object-cover"
+                              />
+                              <Avatar.Fallback className="flex h-full w-full items-center justify-center rounded-full bg-indigo-950 text-indigo-300 border border-indigo-900/50 text-xs font-semibold">
+                                {initials}
+                              </Avatar.Fallback>
+                            </Avatar.Root>
                           )}
                         </td>
                       )}
@@ -416,70 +405,31 @@ export default function TutorsPage() {
                           {tutor.kind === 'ghost' ? '—' : (tutor.assigned_students_count ?? 0)}
                         </td>
                       )}
-                      <td className="py-2 px-6 align-middle text-right relative">
+                      <td className="py-2 px-2 align-middle text-right sticky right-0 bg-[#0a0a0a] group-hover:bg-[#111] border-l border-[rgba(255,255,255,0.08)] transition-colors z-10">
                         {currentUser?.role === 'ADMIN' && (
-                          <>
-                            <button
-                              onClick={(e) => handleDropdownToggle(e, tutor.id)}
-                              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
-
-                            {openDropdownId === tutor.id && (
-                              <div className="absolute right-6 mt-1 w-48 bg-[#121214] border border-[#1e1e24] rounded-lg shadow-xl py-1 z-50 text-left">
-                                <div className="px-3 py-1.5 text-[11px] font-bold text-zinc-500 uppercase tracking-widest border-b border-[#1e1e24]/70 mb-1">
-                                  Actions
-                                </div>
-                                {tutor.kind === 'active' ? (
-                              <>
-                                <button 
-                                  onClick={() => openModal('edit_details', tutor)}
-                                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer"
-                                >
-                                  Edit Details
-                                </button>
-                                <button 
-                                  onClick={() => openModal('delete', tutor)}
-                                  className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-950/20 hover:text-red-300 border-t border-[#1e1e24]/70 mt-1 pt-2 cursor-pointer"
-                                >
-                                  Delete Tutor
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button 
-                                  onClick={() => openModal('edit_email', tutor)}
-                                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer"
-                                >
-                                  Edit Email
-                                </button>
-                                <button 
-                                  onClick={() => openModal('withdraw', tutor)}
-                                  className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-950/20 hover:text-red-300 border-t border-[#1e1e24]/70 mt-1 pt-2 cursor-pointer"
-                                >
-                                  Withdraw Invitation
-                                </button>
-                              </>
-                            )}
-                          </div>
+                          <StaffActionsDropdown
+                            items={tutor.kind === 'active' ? [
+                              { label: 'Edit Details', onClick: () => openModal('edit_details', tutor) },
+                              { label: 'Delete Tutor', onClick: () => openModal('delete', tutor), danger: true },
+                            ] : [
+                              { label: 'Edit Email', onClick: () => openModal('edit_email', tutor) },
+                              { label: 'Withdraw Invitation', onClick: () => openModal('withdraw', tutor), danger: true },
+                            ]}
+                          />
                         )}
-                      </>
-                    )}
-                  </td>
+                      </td>
                     </tr>
                   );
                 })
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* Modals */}
       {modalType && (
         <div className="fixed inset-0 bg-black/45 flex items-center justify-center z-50 p-4">
-          
+
           {/* Edit Details Modal */}
           {modalType === 'edit_details' && (
             <div className="w-full max-w-sm bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
@@ -488,7 +438,7 @@ export default function TutorsPage() {
 
               <form onSubmit={handleEditDetails} className="space-y-4">
                 {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2.5 rounded border border-red-900/50 m-0">{modalError}</p>}
-                
+
                 <div className="space-y-1.5">
                   <label htmlFor="edit-name" className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Name</label>
                   <input
@@ -581,7 +531,7 @@ export default function TutorsPage() {
 
               <form onSubmit={handleEditEmail} className="space-y-4">
                 {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2.5 rounded border border-red-900/50 m-0">{modalError}</p>}
-                
+
                 <div className="space-y-2">
                   <label htmlFor="edit-email-input" className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Email Address</label>
                   <input

@@ -12,7 +12,7 @@
   --primary-light: 39 39 42; /* Neutral 800 */
   
   --chart-grid: rgba(0, 0, 0, 0.05);
-  --chart-bar: #4f46e5; /* Indigo 600 */
+  --chart-bar: #2a2a2a; /* Indigo 600 */
   --chart-text: #71717a; /* Zinc 500 */
 }
 
@@ -60,6 +60,28 @@ h1, h2, h3, h4, h5, h6 {
 
 .animate-fadeIn {
   animation: fadeIn 0.15s ease-out;
+}
+
+/* Thin scrollbar for table wrappers */
+.overflow-x-auto {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
+.overflow-x-auto::-webkit-scrollbar {
+  height: 4px;
+}
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background-color: rgba(255,255,255,0.12);
+  border-radius: 9999px;
+}
+html:not(.dark) .overflow-x-auto {
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
+}
+html:not(.dark) .overflow-x-auto::-webkit-scrollbar-thumb {
+  background-color: rgba(0,0,0,0.15);
 }
 
 /* Custom Light Mode Overrides for Hardcoded Dark Tailwind Elements */

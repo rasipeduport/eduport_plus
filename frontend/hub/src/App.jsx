@@ -8,6 +8,7 @@ import InvitationsPage from './components/InvitationsPage';
 import AdminsPage from './components/AdminsPage';
 import MentorsPage from './components/MentorsPage';
 import TutorsPage from './components/TutorsPage';
+import SessionsPage from './components/SessionsPage';
 
 // Configurable Learn URL for redirecting student role
 const LEARN_URL = import.meta.env.VITE_LEARN_URL || 'http://localhost:3001';
@@ -160,11 +161,8 @@ function SidebarLayout({ user, logout, children }) {
         <nav className="flex-1 px-2 py-4 space-y-1 bg-white dark:bg-[#0a0a0a] transition-colors duration-200">
           {menuItems
             .filter((item) => {
-              if (user?.role === 'TUTOR') {
+              if (user?.role === 'TUTOR' || user?.role === 'MENTOR') {
                 return ['/dashboard', '/students', '/sessions'].includes(item.path);
-              }
-              if (user?.role === 'MENTOR') {
-                return ['/dashboard', '/students', '/sessions', '/tutors', '/mentors', '/invitations'].includes(item.path);
               }
               return true; // ADMIN see all
             })
@@ -306,13 +304,15 @@ function SidebarLayout({ user, logout, children }) {
               ? 'Dashboard' 
               : location.pathname === '/students'
                 ? 'Students'
-                : location.pathname === '/admins'
-                  ? 'Admins'
-                  : location.pathname === '/mentors'
-                    ? 'Mentors'
-                    : location.pathname === '/tutors'
-                      ? 'Tutors'
-                      : 'Invitations'}
+                : location.pathname === '/sessions'
+                  ? 'Sessions'
+                  : location.pathname === '/admins'
+                    ? 'Admins'
+                    : location.pathname === '/mentors'
+                      ? 'Mentors'
+                      : location.pathname === '/tutors'
+                        ? 'Tutors'
+                        : 'Invitations'}
           </h2>
         </header>
         <main className="flex-1 overflow-y-auto p-6 bg-zinc-50 dark:bg-[#050505] transition-colors duration-200">{children}</main>
@@ -652,29 +652,8 @@ function Dashboard() {
     { title: 'Pending Invites', value: stats?.pending_invitations ?? 0 },
   ];
 
-  // Helper to generate dynamic days for last 7 days chart
-  const generateChartData = () => {
-    const data = [];
-    const now = new Date();
-    const mockValues = [1, 2, 0, 4, 5, 1, 2];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(now.getDate() - i);
-      const dayName = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      data.push({
-        day: dayName,
-        signups: mockValues[6 - i]
-      });
-    }
-    return data;
-  };
-
-  const chartData = generateChartData();
-
-  const recentSignups = [
-    { student_code: 'EDP00041', full_name: 'Dona', created_at: '2026-06-17T12:00:00Z' },
-    { student_code: 'EDP00009', full_name: 'Ahmad Zayan', created_at: '2026-06-16T12:00:00Z' },
-  ];
+  const chartData = stats?.signup_data ?? [];
+  const recentSignups = stats?.recent_signups ?? [];
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-full box-border">
@@ -754,25 +733,42 @@ function Dashboard() {
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)]">
+                  <th className="h-10 px-4 w-10"></th>
                   <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-left align-middle">Student ID</th>
                   <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-left align-middle">Name</th>
                   <th className="h-10 px-4 font-semibold text-sm text-zinc-500 dark:text-[#a1a1aa] text-right align-middle">Joined At</th>
                 </tr>
               </thead>
               <tbody>
-                {recentSignups.map((s) => (
-                  <tr key={s.student_code} className="hover:bg-zinc-50/50 dark:hover:bg-[rgba(255,255,255,0.03)] border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] h-[44px] transition-colors">
-                    <td className="py-2 px-4 text-zinc-500 dark:text-[#71717A] font-mono text-xs align-middle">{s.student_code}</td>
-                    <td className="py-2 px-4 font-medium text-zinc-900 dark:text-white text-sm align-middle">{s.full_name}</td>
-                    <td className="py-2 px-4 text-right text-zinc-500 dark:text-[#a1a1aa] text-sm font-normal align-middle">
-                      {new Date(s.created_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
-                    </td>
-                  </tr>
-                ))}
+                {recentSignups.map((s) => {
+                  const initials = s.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2) || 'S';
+                  return (
+                    <tr key={s.student_code} className="hover:bg-zinc-50/50 dark:hover:bg-[rgba(255,255,255,0.03)] border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] h-[44px] transition-colors">
+                      <td className="py-2 px-4 align-middle w-10">
+                        {/* {s.avatar_url ? (
+                          <img 
+                            // src={s.avatar_url} 
+                            alt={s.full_name} 
+                            className="w-8 h-8 rounded-full object-cover border border-[rgba(255,255,255,0.1)]"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-[#374151] flex items-center justify-center font-semibold text-white shrink-0 text-xs">
+                            {initials}
+                          </div>
+                        )} */}
+                      </td>
+                      <td className="py-2 px-4 text-zinc-500 dark:text-[#71717A] font-mono text-xs align-middle">{s.student_code}</td>
+                      <td className="py-2 px-4 font-medium text-zinc-900 dark:text-white text-sm align-middle">{s.full_name}</td>
+                      <td className="py-2 px-4 text-right text-zinc-500 dark:text-[#a1a1aa] text-sm font-normal align-middle">
+                        {new Date(s.created_at).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric'
+                        })}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -797,10 +793,11 @@ export default function App() {
                   <Routes>
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/students" element={<StudentsPage />} />
+                    <Route path="/sessions" element={<SessionsPage />} />
                     <Route path="/admins" element={user?.role === 'ADMIN' ? <AdminsPage /> : <Navigate to="/dashboard" replace />} />
-                    <Route path="/mentors" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <MentorsPage /> : <Navigate to="/dashboard" replace />} />
-                    <Route path="/tutors" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <TutorsPage /> : <Navigate to="/dashboard" replace />} />
-                    <Route path="/invitations" element={['ADMIN', 'MENTOR'].includes(user?.role) ? <InvitationsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/mentors" element={user?.role === 'ADMIN' ? <MentorsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/tutors" element={user?.role === 'ADMIN' ? <TutorsPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route path="/invitations" element={user?.role === 'ADMIN' ? <InvitationsPage /> : <Navigate to="/dashboard" replace />} />
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 </SidebarLayout>

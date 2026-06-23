@@ -12,10 +12,11 @@ class ProfileBriefSerializer(serializers.ModelSerializer):
 
 class StudentBriefSerializer(serializers.ModelSerializer):
     mentor_profile = ProfileBriefSerializer(source='mentor', read_only=True)
+    avatar_url = serializers.CharField(source='profile.avatar_url', read_only=True, default=None)
 
     class Meta:
         model = Student
-        fields = ['student_code', 'full_name', 'mentor_profile']
+        fields = ['student_code', 'full_name', 'mentor_profile', 'avatar_url']
 
 class SessionSerializer(serializers.ModelSerializer):
     student_id = serializers.PrimaryKeyRelatedField(

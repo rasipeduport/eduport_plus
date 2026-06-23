@@ -15,6 +15,7 @@ class ActivityLogPermission(BasePermission):
     """
     Access rules:
     - If filtering by a specific student (student_id), allow ADMIN, MENTOR, or TUTOR.
+      - Mentors and Tutors are restricted to their own allocated students.
     - Otherwise (global audit log), restrict access to ADMIN only (or superusers).
     """
     def has_permission(self, request, view):
@@ -23,7 +24,15 @@ class ActivityLogPermission(BasePermission):
 
         student_id = request.query_params.get('student_id')
         if student_id:
-            return request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser
+            if request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser:
+                if request.user.role == 'MENTOR':
+                    from students.models import Student
+                    return Student.objects.filter(id=student_id, mentor=request.user).exists()
+                elif request.user.role == 'TUTOR':
+                    from students.models import Student
+                    return Student.objects.filter(id=student_id, tutor=request.user).exists()
+                return True
+            return False
         
         return request.user.role == 'ADMIN' or request.user.is_superuser
 

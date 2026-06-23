@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Loader2, Search, Settings, MoreHorizontal, Globe, Calendar, Link2, 
-  Plus, Check, X, ArrowUpDown, ChevronDown, ChevronRight, Eye, Info
+import * as Avatar from '@radix-ui/react-avatar';
+import {
+  Loader2, Search, Link2,
+  Plus, X, ArrowUpDown, ChevronDown, ChevronRight
 } from 'lucide-react';
 import api from '../lib/api';
 import NewInvitationModal from './NewInvitationModal';
+import StaffActionsDropdown from './StaffActionsDropdown';
 
 const MEET_PREFIX = 'https://meet.google.com/';
 
@@ -18,19 +20,22 @@ export default function StudentsPage() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
+
   // Table filters and visibility
   const [searchTerm, setSearchTerm] = useState('');
   const [showColumnsDropdown, setShowColumnsDropdown] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState({
     avatar: true,
+    email: true,
     student_code: true,
     full_name: true,
     status: true,
     mobile_number: true,
+    remarks_for_mentor: true,
     mentor: true,
     tutor: true,
     country: true,
+    state: true,
     school_name: true,
     grade: true,
     syllabus: true,
@@ -45,7 +50,6 @@ export default function StudentsPage() {
 
   // Modal active states
   const [activeStudent, setActiveStudent] = useState(null);
-  const [openDropdownId, setOpenDropdownId] = useState(null);
   const [modalType, setModalType] = useState(null); // 'meet_link' | 'quota' | 'status' | 'history'
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
@@ -92,18 +96,6 @@ export default function StudentsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleOutsideClick = () => setOpenDropdownId(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
-
-  const handleDropdownToggle = (e, id) => {
-    e.stopPropagation();
-    setOpenDropdownId(openDropdownId === id ? null : id);
   };
 
   const openModal = (type, student) => {
@@ -220,7 +212,7 @@ export default function StudentsPage() {
   };
 
   // Process sorting & filtering
-  const filteredStudents = students.filter(student => 
+  const filteredStudents = students.filter(student =>
     student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     student.student_code.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -232,19 +224,19 @@ export default function StudentsPage() {
     return [...dataList].sort((a, b) => {
       let valA = a[sortField];
       let valB = b[sortField];
-      
+
       // Handle nested profile fields if sorted
       if (sortField === 'email') {
-        valA = a.profiles?.email || '';
-        valB = b.profiles?.email || '';
+        valA = a.profile?.email || '';
+        valB = b.profile?.email || '';
       }
-      
+
       if (valA === null || valA === undefined) return sortAsc ? 1 : -1;
       if (valB === null || valB === undefined) return sortAsc ? -1 : 1;
-      
+
       if (typeof valA === 'string') {
-        return sortAsc 
-          ? valA.localeCompare(valB) 
+        return sortAsc
+          ? valA.localeCompare(valB)
           : valB.localeCompare(valA);
       } else {
         return sortAsc ? valA - valB : valB - valA;
@@ -255,23 +247,27 @@ export default function StudentsPage() {
   const renderStudentRow = (student) => {
     const initials = student.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2) || 'S';
     return (
-      <tr 
-        key={student.id} 
-        className="hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
+      <tr
+        key={student.id}
+        className="group hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
       >
         {visibleColumns.avatar && (
           <td className="py-2 px-4 align-middle">
-            {student.profiles?.avatar_url ? (
-              <img 
-                src={student.profiles.avatar_url} 
-                alt={student.full_name} 
-                className="w-8 h-8 rounded-full object-cover border border-[rgba(255,255,255,0.1)]"
+            <Avatar.Root className="relative flex h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[rgba(255,255,255,0.1)]">
+              <Avatar.Image
+                src={student.profile?.avatar_url || undefined}
+                alt={student.full_name}
+                className="aspect-square h-full w-full object-cover"
               />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-[#374151] flex items-center justify-center font-semibold text-white shrink-0 text-xs">
+              <Avatar.Fallback className="flex h-full w-full items-center justify-center rounded-full bg-[#374151] text-xs font-semibold text-white">
                 {initials}
-              </div>
-            )}
+              </Avatar.Fallback>
+            </Avatar.Root>
+          </td>
+        )}
+        {visibleColumns.email && (
+          <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">
+            {student.profile?.email || '—'}
           </td>
         )}
         {visibleColumns.student_code && (
@@ -300,6 +296,11 @@ export default function StudentsPage() {
         {visibleColumns.mobile_number && (
           <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">{student.mobile_number || '—'}</td>
         )}
+        {visibleColumns.remarks_for_mentor && (
+          <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle max-w-[220px] truncate" title={student.remarks_for_mentor}>
+            {student.remarks_for_mentor || '—'}
+          </td>
+        )}
         {visibleColumns.mentor && (
           <td className="py-2 px-4 text-sm text-[#e4e4e7] align-middle whitespace-nowrap">
             {student.mentor_profile?.full_name || student.mentor_profile?.email || 'Not Assigned'}
@@ -312,6 +313,9 @@ export default function StudentsPage() {
         )}
         {visibleColumns.country && (
           <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">{student.country || '—'}</td>
+        )}
+        {visibleColumns.state && (
+          <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">{student.state || '—'}</td>
         )}
         {visibleColumns.school_name && (
           <td className="py-2 px-4 text-[#a1a1aa] text-sm align-middle whitespace-nowrap max-w-[200px] truncate" title={student.school_name}>
@@ -347,63 +351,21 @@ export default function StudentsPage() {
         {visibleColumns.total_class_quota && (
           <td className="py-2 px-4 text-white text-sm align-middle text-center font-mono tabular-nums">{student.total_class_quota}</td>
         )}
-        <td className="py-2 px-4 align-middle text-right relative">
-          <button
-            onClick={(e) => handleDropdownToggle(e, student.id)}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
-          
-          {openDropdownId === student.id && (
-            <div className="absolute right-4 mt-1 w-48 bg-[#121214] border border-[#1e1e24] rounded-lg shadow-xl py-1 z-50 text-left">
-              <div className="px-3 py-1.5 text-[11px] font-bold text-zinc-500 uppercase tracking-widest border-b border-[#1e1e24]/70 mb-1">
-                Actions
-              </div>
-              <button 
-                disabled 
-                className="w-full text-left px-3 py-1.5 text-xs text-zinc-500 cursor-not-allowed"
-              >
-                Edit Profile
-              </button>
-              <Link 
-                to={`/sessions?student_id=${student.id}`}
-                className="block text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-              >
-                Manage Sessions
-              </Link>
-              {userRole !== 'TUTOR' && (
-                <>
-                  <button 
-                    onClick={() => openModal('meet_link', student)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                  >
-                    Edit Meet Link
-                  </button>
-                  <button 
-                    onClick={() => openModal('quota', student)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                  >
-                    Top-up Class Quota
-                  </button>
-                  <button 
-                    onClick={() => openModal('status', student)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                  >
-                    Change Status
-                  </button>
-                </>
-              )}
-              {userRole === 'ADMIN' && (
-                <button 
-                  onClick={() => openModal('history', student)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-400 hover:bg-white/10 hover:text-white border-t border-white/10 mt-1 pt-2"
-                >
-                  View History
-                </button>
-              )}
-            </div>
-          )}
+        <td className="py-2 px-2 align-middle text-right sticky right-0 bg-[#0a0a0a] group-hover:bg-[#111] border-l border-[rgba(255,255,255,0.08)] transition-colors z-10">
+          <StaffActionsDropdown
+            items={[
+              { label: 'Edit Profile', onClick: () => {}, disabled: true },
+              { label: userRole === 'TUTOR' ? 'View Sessions' : 'Manage Sessions', onClick: () => window.location.href = `/sessions?student_id=${student.id}` },
+              ...(userRole !== 'TUTOR' ? [
+                { label: 'Edit Meet Link', onClick: () => openModal('meet_link', student) },
+                { label: 'Top-up Class Quota', onClick: () => openModal('quota', student) },
+                { label: 'Change Status', onClick: () => openModal('status', student) },
+              ] : []),
+              ...(userRole === 'ADMIN' ? [
+                { label: 'View History', onClick: () => openModal('history', student) },
+              ] : []),
+            ]}
+          />
         </td>
       </tr>
     );
@@ -452,8 +414,8 @@ export default function StudentsPage() {
                   Toggle Columns
                 </div>
                 {Object.keys(visibleColumns).map(col => (
-                  <label 
-                    key={col} 
+                  <label
+                    key={col}
                     className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-xs text-zinc-300 hover:text-white"
                   >
                     <input
@@ -471,7 +433,7 @@ export default function StudentsPage() {
         </div>
 
         {userRole !== 'TUTOR' && (
-          <button 
+          <button
             onClick={() => setIsInviteModalOpen(true)}
             className="h-10 px-4 bg-white hover:bg-zinc-200 text-zinc-950 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 self-stretch sm:self-auto shrink-0 justify-center cursor-pointer"
           >
@@ -488,13 +450,20 @@ export default function StudentsPage() {
       )}
 
       {/* Main Students Table */}
-      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl overflow-hidden shadow-xl">
-        <div className="overflow-x-auto w-full">
+      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl shadow-xl overflow-x-auto w-full">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-[rgba(255,255,255,0.08)] bg-[#0f0f0f]">
                 {visibleColumns.avatar && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle w-10"></th>}
-                
+                {visibleColumns.email && (
+                  <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">
+                    <button onClick={() => handleSort('email')} className="flex items-center gap-1 hover:text-white">
+                      Email
+                      <ArrowUpDown className="w-3.5 h-3.5" />
+                    </button>
+                  </th>
+                )}
+
                 {visibleColumns.student_code && (
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">
                     <button onClick={() => handleSort('student_code')} className="flex items-center gap-1 hover:text-white">
@@ -515,13 +484,15 @@ export default function StudentsPage() {
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Status</th>
                 )}
                 {visibleColumns.mobile_number && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Mobile</th>}
+                {visibleColumns.remarks_for_mentor && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Remarks for Mentor</th>}
                 {visibleColumns.mentor && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Mentor</th>}
                 {visibleColumns.tutor && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Tutor</th>}
                 {visibleColumns.country && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Country</th>}
+                {visibleColumns.state && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">State</th>}
                 {visibleColumns.school_name && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">School</th>}
                 {visibleColumns.grade && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Grade</th>}
                 {visibleColumns.syllabus && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Syllabus</th>}
-                
+
                 {visibleColumns.admission_date && (
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">
                     <button onClick={() => handleSort('admission_date')} className="flex items-center gap-1 hover:text-white">
@@ -539,7 +510,7 @@ export default function StudentsPage() {
                   </th>
                 )}
                 {visibleColumns.meet_link && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Meet Link</th>}
-                
+
                 {visibleColumns.total_class_quota && (
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle text-center">
                     <button onClick={() => handleSort('total_class_quota')} className="flex items-center gap-1 mx-auto hover:text-white">
@@ -548,7 +519,7 @@ export default function StudentsPage() {
                     </button>
                   </th>
                 )}
-                <th className="h-12 px-4 w-10"></th>
+                <th className="h-12 px-2 w-10 sticky right-0 bg-[#0f0f0f] border-l border-[rgba(255,255,255,0.08)] z-20"></th>
               </tr>
             </thead>
             <tbody>
@@ -563,12 +534,11 @@ export default function StudentsPage() {
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
-      {/* Expired Students Section */}
+       Expired Students Section 
       {userRole !== 'TUTOR' && (
-        <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl overflow-hidden shadow-xl mt-2">
+        <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl shadow-xl mt-2">
           <button
             onClick={() => setShowExpired(!showExpired)}
             className="w-full flex items-center justify-between p-4 text-sm font-semibold text-zinc-300 hover:text-white hover:bg-zinc-900/30 transition-all border-none outline-none cursor-pointer"
@@ -578,9 +548,9 @@ export default function StudentsPage() {
               Expired Students ({expiredStudents.length})
             </div>
           </button>
-          
+
           {showExpired && (
-            <div className="overflow-x-auto border-t border-[rgba(255,255,255,0.08)] bg-black/25">
+            <div className="overflow-x-auto border-t border-[rgba(255,255,255,0.08)] bg-black/25 rounded-b-xl">
               <table className="w-full text-left border-collapse text-sm">
                 <tbody>
                   {expiredStudents.length === 0 ? (
@@ -609,7 +579,7 @@ export default function StudentsPage() {
 
               <form onSubmit={handleSaveMeetLink} className="space-y-4">
                 {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 m-0">{modalError}</p>}
-                
+
                 <div className="space-y-2">
                   <label htmlFor="meet-code" className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Google Meet Link</label>
                   <div className="flex items-center bg-white/[0.04] border border-white/10 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-white/20 transition-all">
@@ -780,7 +750,7 @@ export default function StudentsPage() {
                   <h3 className="text-sm font-semibold text-white m-0">Activity History</h3>
                   <span className="text-[11px] text-zinc-400">Changes to {activeStudent?.full_name} and their sessions</span>
                 </div>
-                <button 
+                <button
                   onClick={closeModal}
                   className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
                 >
@@ -804,7 +774,7 @@ export default function StudentsPage() {
                     {historyLogs.map(log => {
                       const hasChanges = Object.keys(log.changes || {}).length > 0;
                       const isExpanded = expandedLogId === log.id;
-                      
+
                       // Format human-friendly descriptions
                       let description = log.action;
                       if (log.action === 'student.create') description = 'Added the student';
@@ -813,12 +783,12 @@ export default function StudentsPage() {
                         const newS = log.changes?.status?.new || 'None';
                         const note = log.changes?.status_note?.new;
                         description = `Changed status from "${oldS}" to "${newS}"${note ? ` (${note})` : ''}`;
-                      } 
+                      }
                       else if (log.action === 'student.update_quota') {
                         const oldQ = log.changes?.total_class_quota?.old ?? 0;
                         const newQ = log.changes?.total_class_quota?.new ?? 0;
                         description = `Changed class quota from ${oldQ} to ${newQ}`;
-                      } 
+                      }
                       else if (log.action === 'student.update_meet_link') description = 'Updated meet link';
                       else if (log.action === 'LOGIN') description = 'Logged in';
                       else if (log.action === 'LOGOUT') description = 'Logged out';
@@ -835,9 +805,9 @@ export default function StudentsPage() {
                                 {new Date(log.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
-                            
+
                             <p className="text-xs text-zinc-400 m-0 leading-relaxed">{description}</p>
-                            
+
                             {hasChanges && (
                               <button
                                 onClick={() => setExpandedLogId(isExpanded ? null : log.id)}

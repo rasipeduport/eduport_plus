@@ -190,7 +190,7 @@ else:
 EMAIL_HOST = env('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
-DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@eduport.com')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='rasip.eduport@gmail.com')
 
 # Frontend URLs for redirect links
 HUB_URL = env('HUB_URL', default='http://localhost:3000')

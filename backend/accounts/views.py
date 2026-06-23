@@ -251,6 +251,7 @@ class MentorListView(APIView):
                 "id": str(m.id),
                 "full_name": m.full_name or "",
                 "email": m.email,
+                "avatar_url": m.avatar_url or None,
                 "mobile_number": m.mobile_number or "",
                 "created_at": m.created_at.isoformat(),
                 "invited_by_profile": {
@@ -293,6 +294,7 @@ class TutorListView(APIView):
                 "id": str(t.id),
                 "full_name": t.full_name or "",
                 "email": t.email,
+                "avatar_url": t.avatar_url or None,
                 "mobile_number": t.mobile_number or "",
                 "created_at": t.created_at.isoformat(),
                 "invited_by_profile": {
@@ -329,6 +331,7 @@ class AdminListView(APIView):
                 "id": str(a.id),
                 "full_name": a.full_name or "",
                 "email": a.email,
+                "avatar_url": a.avatar_url or None,
                 "mobile_number": a.mobile_number or "",
                 "created_at": a.created_at.isoformat(),
                 "invited_by_profile": {

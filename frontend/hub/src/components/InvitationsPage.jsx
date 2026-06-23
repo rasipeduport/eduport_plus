@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { 
-  Loader2, Search, MoreVertical, Plus, Check, X, 
-  ArrowUpDown, ChevronDown, Trash
+  Loader2, Search, Plus,
+  ArrowUpDown, ChevronDown, Trash, Mail
 } from 'lucide-react';
 import api from '../lib/api';
 import NewInvitationModal from './NewInvitationModal';
+import StaffActionsDropdown from './StaffActionsDropdown';
 
 export default function InvitationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,6 +18,7 @@ export default function InvitationsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showColumnsDropdown, setShowColumnsDropdown] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState({
+    avatar: true,
     email: true,
     role: true,
     created_at: true,
@@ -30,7 +32,7 @@ export default function InvitationsPage() {
   // Edit / Withdraw Modal states
   const [modalType, setModalType] = useState(null); // 'edit_email' | 'withdraw'
   const [activeInvite, setActiveInvite] = useState(null);
-  const [openDropdownId, setOpenDropdownId] = useState(null);
+
   
   // Edit & Withdraw state values
   const [editEmailVal, setEditEmailVal] = useState('');
@@ -83,18 +85,6 @@ export default function InvitationsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleOutsideClick = () => setOpenDropdownId(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
-
-  const handleDropdownToggle = (e, id) => {
-    e.stopPropagation();
-    setOpenDropdownId(openDropdownId === id ? null : id);
   };
 
   const openModal = (type, invite) => {
@@ -274,11 +264,11 @@ export default function InvitationsPage() {
       )}
 
       {/* Whitelisted Invitations List */}
-      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl overflow-hidden shadow-xl">
-        <div className="overflow-x-auto w-full">
+      <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl shadow-xl overflow-x-auto w-full">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-[rgba(255,255,255,0.08)] bg-[#0f0f0f]">
+                {visibleColumns.avatar && <th className="h-12 px-6 font-semibold text-xs text-zinc-400 align-middle w-10"></th>}
                 {visibleColumns.email && (
                   <th className="h-12 px-6 font-semibold text-xs text-zinc-400 align-middle">
                     <button onClick={() => handleSort('email')} className="flex items-center gap-1 hover:text-white">
@@ -311,7 +301,7 @@ export default function InvitationsPage() {
                     </button>
                   </th>
                 )}
-                <th className="h-12 px-6 w-10"></th>
+                <th className="h-12 px-2 w-10 sticky right-0 bg-[#0f0f0f] border-l border-[rgba(255,255,255,0.08)] z-20"></th>
               </tr>
             </thead>
             <tbody>
@@ -327,12 +317,19 @@ export default function InvitationsPage() {
                     key={invite.id} 
                     className="hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
                   >
+                    {visibleColumns.avatar && (
+                      <td className="py-2 px-6 align-middle">
+                        <div className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center border border-zinc-700/50">
+                          <Mail className="w-4 h-4" />
+                        </div>
+                      </td>
+                    )}
                     {visibleColumns.email && (
                       <td className="py-2 px-6 text-white text-sm font-medium align-middle whitespace-nowrap">{invite.email}</td>
                     )}
                     {visibleColumns.role && (
                       <td className="py-2 px-6 align-middle">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold capitalize bg-zinc-800 text-zinc-300 border border-zinc-700/50">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold capitalize bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700/50">
                           {invite.role.toLowerCase()}
                         </span>
                       </td>
@@ -350,44 +347,14 @@ export default function InvitationsPage() {
                         {invite.invited_by_profile?.full_name || invite.invited_by_profile?.email || '—'}
                       </td>
                     )}
-                    <td className="py-2 px-6 align-middle text-right relative">
-                      {!(currentUser?.role === 'MENTOR' && invite.role !== 'STUDENT') && (
-                        <>
-                          <button
-                            onClick={(e) => handleDropdownToggle(e, invite.id)}
-                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
-
-                          {openDropdownId === invite.id && (
-                            <div className="absolute right-6 mt-1 w-48 bg-[#121214] border border-[#1e1e24] rounded-lg shadow-xl py-1 z-50 text-left">
-                              <div className="px-3 py-1.5 text-[11px] font-bold text-zinc-500 uppercase tracking-widest border-b border-[#1e1e24]/70 mb-1">
-                                Actions
-                              </div>
-                              {invite.status !== 'ACCEPTED' ? (
-                                <>
-                                  <button 
-                                    onClick={() => openModal('edit_email', invite)}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer"
-                                  >
-                                    Edit Email
-                                  </button>
-                                  <button 
-                                    onClick={() => openModal('withdraw', invite)}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-950/20 hover:text-red-300 border-t border-[#1e1e24]/70 mt-1 pt-2 cursor-pointer"
-                                  >
-                                    Withdraw Invitation
-                                  </button>
-                                </>
-                              ) : (
-                                <div className="px-3 py-1.5 text-xs text-zinc-500 italic">
-                                  Invitation accepted
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </>
+                    <td className="py-2 px-2 align-middle text-right sticky right-0 bg-[#0a0a0a] hover:bg-[#111] border-l border-[rgba(255,255,255,0.08)] transition-colors z-10">
+                      {!(currentUser?.role === 'MENTOR' && invite.role !== 'STUDENT') && invite.status !== 'ACCEPTED' && (
+                        <StaffActionsDropdown
+                          items={[
+                            { label: 'Edit Email', onClick: () => openModal('edit_email', invite) },
+                            { label: 'Withdraw Invitation', onClick: () => openModal('withdraw', invite), danger: true },
+                          ]}
+                        />
                       )}
                     </td>
                   </tr>
@@ -395,7 +362,6 @@ export default function InvitationsPage() {
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* Modal dialogs */}

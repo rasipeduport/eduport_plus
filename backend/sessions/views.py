@@ -64,14 +64,19 @@ class SessionsView(APIView):
     permission_classes = [IsAuthenticated, IsStaffOrSelfStudent]
 
     def get(self, request, *args, **kwargs):
-        queryset = Session.objects.all().order_by('-start_time')
+        queryset = Session.objects.select_related('student', 'student__profile', 'tutor').order_by('-start_time')
         
         # If the requester is a student, restrict to their own sessions
-        if request.user.role == 'STUDENT':
+        role = request.user.role
+        if role == 'STUDENT':
             student = Student.objects.filter(profile=request.user).first()
             if not student:
                 return Response({"sessions": []}, status=status.HTTP_200_OK)
             queryset = queryset.filter(student=student)
+        elif role == 'MENTOR':
+            queryset = queryset.filter(student__mentor=request.user)
+        elif role == 'TUTOR':
+            queryset = queryset.filter(student__tutor=request.user)
 
         serializer = SessionSerializer(queryset, many=True)
         return Response({"sessions": serializer.data}, status=status.HTTP_200_OK)
@@ -121,6 +126,18 @@ class SessionsView(APIView):
             return Response(
                 {"error": "Student not found"},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        role = request.user.role
+        if role == 'TUTOR':
+            return Response(
+                {"error": "Forbidden", "message": "Tutors cannot create sessions."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif role == 'MENTOR' and student.mentor != request.user:
+            return Response(
+                {"error": "Forbidden", "message": "You can only manage sessions for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
             )
 
         if not student.tutor:
@@ -252,6 +269,18 @@ class SessionsView(APIView):
             return Response(
                 {"error": "Session not found"},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        role = request.user.role
+        if role == 'MENTOR' and session.student.mentor != request.user:
+            return Response(
+                {"error": "Forbidden", "message": "You can only edit sessions for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif role == 'TUTOR' and session.student.tutor != request.user:
+            return Response(
+                {"error": "Forbidden", "message": "You can only edit sessions for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
             )
 
         # Check cancellation constraints
@@ -423,6 +452,18 @@ class CancelSeriesView(APIView):
             target_session = Session.objects.get(id=session_id)
         except Session.DoesNotExist:
             return Response({"error": "Session not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        role = request.user.role
+        if role == 'MENTOR' and target_session.student.mentor != request.user:
+            return Response(
+                {"error": "Forbidden", "message": "You can only cancel sessions for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif role == 'TUTOR' and target_session.student.tutor != request.user:
+            return Response(
+                {"error": "Forbidden", "message": "You can only cancel sessions for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         if target_session.status != SessionStatusChoices.SCHEDULED:
             return Response({"error": "Only scheduled sessions can be cancelled"}, status=status.HTTP_400_BAD_REQUEST)

@@ -45,8 +45,19 @@ class StaffDashboardStatsView(APIView):
     permission_classes = [IsStaffUser]
 
     def get(self, request, *args, **kwargs):
+        role = request.user.role
+        is_mentor = role == 'MENTOR'
+        is_tutor = role == 'TUTOR'
+
+        # Filter students based on role allocation
+        student_qs = Student.objects.all()
+        if is_mentor:
+            student_qs = student_qs.filter(mentor=request.user)
+        elif is_tutor:
+            student_qs = student_qs.filter(tutor=request.user)
+
         # Base counts
-        students_count = Student.objects.count()
+        students_count = student_qs.count()
         mentors_count = User.objects.filter(role='MENTOR').count()
         tutors_count = User.objects.filter(role='TUTOR').count()
         pending_invites_count = Invitation.objects.filter(status=InvitationStatusChoices.PENDING).count()
@@ -63,7 +74,7 @@ class StaffDashboardStatsView(APIView):
         since = now_utc - datetime.timedelta(days=6)
         since = since.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        signups = Student.objects.filter(created_at__gte=since)
+        signups = student_qs.filter(created_at__gte=since)
         for s in signups:
             created_utc = s.created_at.astimezone(datetime.timezone.utc)
             day_num = str(int(created_utc.strftime("%d")))
@@ -74,12 +85,13 @@ class StaffDashboardStatsView(APIView):
         signup_data = [{"day": day, "signups": count} for day, count in day_map.items()]
 
         # Recent 5 student signups
-        recent = Student.objects.all().order_by('-created_at')[:5]
+        recent = student_qs.select_related('profile').order_by('-created_at')[:5]
         recent_signups = [
             {
                 "student_code": s.student_code,
                 "full_name": s.full_name,
-                "created_at": s.created_at.isoformat()
+                "created_at": s.created_at.isoformat(),
+                "avatar_url": s.profile.avatar_url if s.profile else None
             }
             for s in recent
         ]
@@ -159,10 +171,13 @@ class StudentListView(APIView):
     def get(self, request, *args, **kwargs):
         role = request.user.role
         is_tutor = role == 'TUTOR'
+        is_mentor = role == 'MENTOR'
         
         queryset = Student.objects.all().order_by('student_code')
         if is_tutor:
             queryset = queryset.filter(tutor=request.user, status__in=['ACTIVE', 'INACTIVE'])
+        elif is_mentor:
+            queryset = queryset.filter(mentor=request.user)
         
         data = []
         for s in queryset.select_related('profile', 'mentor', 'tutor'):
@@ -183,7 +198,7 @@ class StudentListView(APIView):
                 "remarks_for_mentor": s.remarks_for_mentor or "",
                 "status": s.status.lower(),
                 "status_note": s.status_note or "",
-                "profiles": {
+                "profile": {
                     "email": s.profile.email if s.profile else "",
                     "avatar_url": s.profile.avatar_url if s.profile else None
                 } if s.profile else None,
@@ -220,6 +235,12 @@ class StudentListView(APIView):
             return Response(
                 {"error": "NOT_FOUND", "message": "Student not found."},
                 status=status.HTTP_404_NOT_FOUND
+            )
+            
+        if request.user.role == 'MENTOR' and student.mentor != request.user:
+            return Response(
+                {"error": "FORBIDDEN", "message": "You can only update details for your allocated students."},
+                status=status.HTTP_403_FORBIDDEN
             )
             
         # Update fields if present in request.data
