@@ -33,6 +33,7 @@ class StudentSerializer(serializers.ModelSerializer):
             'syllabus',
             'admission_date',
             'total_class_quota',
+            'meet_link',
             'status'
         ]
         read_only_fields = ['student_code', 'status']

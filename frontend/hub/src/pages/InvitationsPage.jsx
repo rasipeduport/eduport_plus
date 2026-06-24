@@ -117,6 +117,7 @@ export default function InvitationsPage() {
     setModalError('');
     try {
       await api.patch('/api/invitations/', {
+        id: activeInvite.id,
         old_email: activeInvite.email,
         new_email: editEmailVal.trim().toLowerCase()
       });
@@ -135,7 +136,7 @@ export default function InvitationsPage() {
     setModalError('');
     try {
       await api.delete('/api/invitations/', {
-        data: { email: activeInvite.email }
+        data: { id: activeInvite.id, email: activeInvite.email }
       });
       fetchInvitations();
       closeModal();

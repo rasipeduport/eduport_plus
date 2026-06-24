@@ -5,6 +5,7 @@ from rest_framework.test import APITestCase
 from rest_framework import status
 from unittest.mock import patch
 from .models import Invitation, InvitationStatusChoices, InvitationRoleChoices
+from students.models import Student
 
 User = get_user_model()
 
@@ -88,16 +89,48 @@ class InvitationFlowTests(APITestCase):
 
 
     @patch('invitations.views.GoogleSheetsService.lookup_student_by_code')
-    def test_lookup_user_already_registered_returns_400(self, mock_lookup):
+    def test_lookup_staff_email_blocks(self, mock_lookup):
+        # A sheet record whose email belongs to a registered STAFF account is blocked.
         mock_lookup.return_value = {
             "student_code": "EDP00099",
-            "email": "existing_student@gmail.com", # Email of self.student_user
+            "email": "mentor@eduport.com",  # Email of self.mentor_user (role MENTOR)
             "full_name": "Student User"
         }
         self.client.force_authenticate(user=self.admin_user)
         response = self.client.post(self.lookup_url, {"student_code": "EDP00099"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"], "USER_ALREADY_REGISTERED")
+
+    @patch('invitations.views.GoogleSheetsService.lookup_student_by_code')
+    def test_lookup_registered_student_parent_allowed(self, mock_lookup):
+        # A registered STUDENT (parent) can be looked up to add another child.
+        mock_lookup.return_value = {
+            "student_code": "EDP00200",
+            "email": "existing_student@gmail.com",  # Email of self.student_user (role STUDENT)
+            "full_name": "Second Child"
+        }
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.lookup_url, {"student_code": "EDP00200"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "found")
+
+    @patch('invitations.views.GoogleSheetsService.lookup_student_by_code')
+    def test_lookup_already_onboarded_student_blocks(self, mock_lookup):
+        # A code that already has a Student row cannot be invited again.
+        Student.objects.create(
+            profile=self.student_user,
+            student_code="EDP00300",
+            full_name="Enrolled Kid",
+        )
+        mock_lookup.return_value = {
+            "student_code": "EDP00300",
+            "email": "existing_student@gmail.com",
+            "full_name": "Enrolled Kid"
+        }
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.lookup_url, {"student_code": "EDP00300"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "STUDENT_ALREADY_ONBOARDED")
 
     # --- CREATE INVITATION TESTS ---
 
@@ -255,6 +288,94 @@ class InvitationFlowTests(APITestCase):
         response = self.client.delete(list_url, delete_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertTrue(Invitation.objects.filter(email="staff_invite@gmail.com").exists())
+
+    def test_create_second_student_invitation_for_same_email(self):
+        # First child invited for a parent email.
+        first = Invitation.objects.create(
+            email="parent@gmail.com",
+            role=InvitationRoleChoices.STUDENT,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"student_code": "EDP00001", "full_name": "Child One"},
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Second child, SAME email, DIFFERENT code -> a brand new invitation.
+        payload = {
+            "student_code": "EDP00002",
+            "email": "parent@gmail.com",
+            "full_name": "Child Two",
+        }
+        response = self.client.post(self.create_url, payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "created")
+
+        invites = Invitation.objects.filter(email="parent@gmail.com").order_by("created_at")
+        self.assertEqual(invites.count(), 2)
+        codes = sorted(i.extra_data["student_code"] for i in invites)
+        self.assertEqual(codes, ["EDP00001", "EDP00002"])
+
+    def test_create_second_student_for_registered_parent_allowed(self):
+        # The parent has already logged in (registered as a STUDENT user).
+        payload = {
+            "student_code": "EDP00010",
+            "email": "existing_student@gmail.com",  # self.student_user, role STUDENT
+            "full_name": "Another Child",
+        }
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.create_url, payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            Invitation.objects.filter(
+                email="existing_student@gmail.com",
+                extra_data__student_code="EDP00010",
+            ).exists()
+        )
+
+    def test_create_student_invitation_for_staff_email_blocked(self):
+        payload = {
+            "student_code": "EDP00020",
+            "email": "mentor@eduport.com",  # registered MENTOR
+            "full_name": "Should Fail",
+        }
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.create_url, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "USER_ALREADY_REGISTERED")
+
+    def test_create_invitation_for_onboarded_code_blocked(self):
+        Student.objects.create(
+            profile=self.student_user,
+            student_code="EDP00030",
+            full_name="Enrolled",
+        )
+        payload = {
+            "student_code": "EDP00030",
+            "email": "newparent@gmail.com",
+            "full_name": "Enrolled",
+        }
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.create_url, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "STUDENT_ALREADY_ONBOARDED")
+
+    def test_withdraw_by_id_targets_correct_child(self):
+        # Two children share a parent email; withdraw must hit the right row.
+        a = Invitation.objects.create(
+            email="twins@gmail.com", role=InvitationRoleChoices.STUDENT,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"student_code": "EDP00041"},
+        )
+        b = Invitation.objects.create(
+            email="twins@gmail.com", role=InvitationRoleChoices.STUDENT,
+            status=InvitationStatusChoices.PENDING,
+            extra_data={"student_code": "EDP00042"},
+        )
+        self.client.force_authenticate(user=self.admin_user)
+        list_url = reverse('invitations:create-invitation')
+        response = self.client.delete(list_url, {"id": str(a.id)}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Invitation.objects.filter(id=a.id).exists())
+        self.assertTrue(Invitation.objects.filter(id=b.id).exists())
 
     def test_create_staff_invitation_sends_hub_email(self):
         self.client.force_authenticate(user=self.admin_user)

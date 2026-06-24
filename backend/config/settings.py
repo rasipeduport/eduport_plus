@@ -57,9 +57,6 @@ INSTALLED_APPS = [
     'sessions',
     'invitations',
     'activity',
-    'library',
-    'mentors',
-    'tutors',
 ]
 
 MIDDLEWARE = [
@@ -146,6 +143,11 @@ STATIC_URL = 'static/'
 
 # Custom Authentication User Model
 AUTH_USER_MODEL = 'accounts.User'
+
+# Allow the "mock:" Google credential shortcut used for dev/test logins.
+# Defined explicitly (defaults to DEBUG) so production can never enable it
+# implicitly — set ALLOW_MOCK_AUTH=False even if DEBUG is accidentally on.
+ALLOW_MOCK_AUTH = env.bool('ALLOW_MOCK_AUTH', default=DEBUG)
 
 # REST Framework Configuration
 REST_FRAMEWORK = {

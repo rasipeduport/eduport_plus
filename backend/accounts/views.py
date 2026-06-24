@@ -45,7 +45,7 @@ def verify_google_token(token: str) -> dict:
     allows mock auth of format "mock:email@example.com:Name:Avatar_URL" for dev/test convenience.
     """
     client_id = getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', '')
-    allow_mock = getattr(settings, 'ALLOW_MOCK_AUTH', settings.DEBUG)
+    allow_mock = settings.ALLOW_MOCK_AUTH
     
     if allow_mock and token.startswith("mock:"):
         parts = token.split(":", 3)
@@ -369,6 +369,7 @@ class UserDetailView(APIView):
     DELETE /api/users/<id>/ - Delete User profile.
     """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CSRFExemptSessionAuthentication]
 
     def patch(self, request, pk, *args, **kwargs):
         if request.user.role != 'ADMIN':

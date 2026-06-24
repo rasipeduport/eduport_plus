@@ -26,7 +26,10 @@ class IsStudentUser(BasePermission):
 
 class IsStaffOrSelfStudent(BasePermission):
     """
-    Allow staff roles full access; students can only retrieve/GET (their own data).
+    Allow staff roles full access; students may GET (read their own data) and
+    PUT (rate their own sessions). Student PUT is further restricted in the view
+    to the rating field on their own selected student's sessions. Students remain
+    blocked from POST (create) and series cancellation.
     """
 
     def has_permission(self, request, view):
@@ -36,7 +39,7 @@ class IsStaffOrSelfStudent(BasePermission):
         if request.user.role in STAFF_ROLES or request.user.is_superuser:
             return True
 
-        if request.user.role == 'STUDENT' and request.method == 'GET':
+        if request.user.role == 'STUDENT' and request.method in ('GET', 'PUT'):
             return True
 
         return False

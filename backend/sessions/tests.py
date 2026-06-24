@@ -152,6 +152,75 @@ class EduportPlusBackendAPITests(APITestCase):
         self.assertEqual(res.data['next_session']['id'], str(next_class.id))
         self.assertEqual(res.data['last_session']['title'], 'Past Class')
 
+    def test_student_can_rate_own_session(self):
+        past_time = timezone.now() - timedelta(days=1)
+        sess = Session.objects.create(
+            student=self.student,
+            tutor=self.tutor,
+            start_time=past_time,
+            end_time=past_time + timedelta(hours=1),
+            title='Past Class',
+            status=SessionStatusChoices.ATTENDED,
+        )
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.put(self.sessions_url, {"id": str(sess.id), "rating": 5}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        sess.refresh_from_db()
+        self.assertEqual(sess.rating, 5)
+
+    def test_student_cannot_rate_other_students_session(self):
+        past_time = timezone.now() - timedelta(days=1)
+        other = Session.objects.create(
+            student=self.student2,
+            tutor=self.tutor,
+            start_time=past_time,
+            end_time=past_time + timedelta(hours=1),
+            title='Other Class',
+            status=SessionStatusChoices.ATTENDED,
+        )
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.put(self.sessions_url, {"id": str(other.id), "rating": 4}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        other.refresh_from_db()
+        self.assertIsNone(other.rating)
+
+    def test_student_put_ignores_non_rating_fields(self):
+        past_time = timezone.now() - timedelta(days=1)
+        sess = Session.objects.create(
+            student=self.student,
+            tutor=self.tutor,
+            start_time=past_time,
+            end_time=past_time + timedelta(hours=1),
+            title='Past Class',
+            status=SessionStatusChoices.ATTENDED,
+        )
+        self.client.force_authenticate(user=self.student_user)
+        # Attempt to also change status and title; only rating should apply.
+        res = self.client.put(
+            self.sessions_url,
+            {"id": str(sess.id), "rating": 3, "status": "CANCELLED", "title": "Hacked"},
+            format='json',
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        sess.refresh_from_db()
+        self.assertEqual(sess.rating, 3)
+        self.assertEqual(sess.status, SessionStatusChoices.ATTENDED)
+        self.assertEqual(sess.title, 'Past Class')
+
+    def test_student_put_requires_valid_rating(self):
+        past_time = timezone.now() - timedelta(days=1)
+        sess = Session.objects.create(
+            student=self.student,
+            tutor=self.tutor,
+            start_time=past_time,
+            end_time=past_time + timedelta(hours=1),
+            title='Past Class',
+            status=SessionStatusChoices.ATTENDED,
+        )
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.put(self.sessions_url, {"id": str(sess.id), "rating": 9}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_session_crud_and_quota_validation(self):
         """
         Verify session creation checks quota and scheduling conflicts.
@@ -358,4 +427,97 @@ class EduportPlusBackendAPITests(APITestCase):
         # Verify Student is not allowed to query global logs
         self.client.force_authenticate(user=self.student_user)
         res = self.client.get(self.activity_logs_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class RoleScopingSecurityTests(APITestCase):
+    """
+    RLS -> DRF parity: a mentor/tutor may only read and act on the students and
+    sessions allocated to them. These guard the row-scoping that Postgres RLS
+    used to enforce in the lead app.
+    """
+
+    def setUp(self):
+        self.mentor_a = User.objects.create_user(email='ma@eduport.com', password='x', full_name='Mentor A', role='MENTOR', is_staff=True)
+        self.mentor_b = User.objects.create_user(email='mb@eduport.com', password='x', full_name='Mentor B', role='MENTOR', is_staff=True)
+        self.tutor_a = User.objects.create_user(email='ta@eduport.com', password='x', full_name='Tutor A', role='TUTOR', is_staff=True)
+        self.tutor_b = User.objects.create_user(email='tb@eduport.com', password='x', full_name='Tutor B', role='TUTOR', is_staff=True)
+
+        self.user_a = User.objects.create_user(email='sa@eduport.com', password='x', full_name='Stu A', role='STUDENT')
+        self.user_b = User.objects.create_user(email='sb@eduport.com', password='x', full_name='Stu B', role='STUDENT')
+
+        self.student_a = Student.objects.create(
+            profile=self.user_a, student_code='EDPA', full_name='Stu A',
+            mentor=self.mentor_a, tutor=self.tutor_a, total_class_quota=10, status=StatusChoices.ACTIVE,
+        )
+        self.student_b = Student.objects.create(
+            profile=self.user_b, student_code='EDPB', full_name='Stu B',
+            mentor=self.mentor_b, tutor=self.tutor_b, total_class_quota=10, status=StatusChoices.ACTIVE,
+        )
+        self.students_url = reverse('students:student-list')
+        self.sessions_url = reverse('sessions:sessions-list-create-update')
+
+    def test_mentor_lists_only_own_students(self):
+        self.client.force_authenticate(user=self.mentor_a)
+        res = self.client.get(self.students_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        codes = {s['student_code'] for s in res.data}
+        self.assertEqual(codes, {'EDPA'})
+
+    def test_tutor_lists_only_own_students(self):
+        self.client.force_authenticate(user=self.tutor_b)
+        res = self.client.get(self.students_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        codes = {s['student_code'] for s in res.data}
+        self.assertEqual(codes, {'EDPB'})
+
+    def test_mentor_cannot_update_other_mentors_student(self):
+        self.client.force_authenticate(user=self.mentor_a)
+        res = self.client.put(self.students_url, {"id": str(self.student_b.id), "total_class_quota": 99}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.student_b.refresh_from_db()
+        self.assertEqual(self.student_b.total_class_quota, 10)
+
+    def test_mentor_cannot_create_session_for_other_mentors_student(self):
+        self.client.force_authenticate(user=self.mentor_a)
+        future = timezone.now() + timedelta(days=1)
+        payload = {
+            "student_id": str(self.student_b.id),
+            "base_title": "Sneaky",
+            "items": [{"start_time": future.isoformat(), "duration_hours": 1}],
+        }
+        res = self.client.post(self.sessions_url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(Session.objects.filter(student=self.student_b).exists())
+
+    def test_tutor_cannot_create_sessions(self):
+        self.client.force_authenticate(user=self.tutor_a)
+        future = timezone.now() + timedelta(days=1)
+        payload = {
+            "student_id": str(self.student_a.id),
+            "base_title": "Tutor Attempt",
+            "items": [{"start_time": future.isoformat(), "duration_hours": 1}],
+        }
+        res = self.client.post(self.sessions_url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_mentor_sees_only_own_students_sessions(self):
+        now = timezone.now()
+        Session.objects.create(student=self.student_a, tutor=self.tutor_a, start_time=now, end_time=now + timedelta(hours=1), title='A class')
+        Session.objects.create(student=self.student_b, tutor=self.tutor_b, start_time=now, end_time=now + timedelta(hours=1), title='B class')
+
+        self.client.force_authenticate(user=self.mentor_a)
+        res = self.client.get(self.sessions_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        titles = {s['title'] for s in res.data['sessions']}
+        self.assertEqual(titles, {'A class'})
+
+    def test_mentor_cannot_cancel_other_mentors_series(self):
+        now = timezone.now()
+        sess = Session.objects.create(
+            student=self.student_b, tutor=self.tutor_b, start_time=now, end_time=now + timedelta(hours=1),
+            title='B class', status=SessionStatusChoices.SCHEDULED,
+        )
+        self.client.force_authenticate(user=self.mentor_a)
+        res = self.client.post('/api/sessions/cancel/', {"session_id": str(sess.id), "cancellation_reason": "nope"}, format='json')
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)

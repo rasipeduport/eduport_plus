@@ -354,7 +354,6 @@ export default function StudentsPage() {
         <td className="py-2 px-2 align-middle text-right sticky right-0 bg-[#0a0a0a] group-hover:bg-[#111] border-l border-[rgba(255,255,255,0.08)] transition-colors z-10">
           <StaffActionsDropdown
             items={[
-              { label: 'Edit Profile', onClick: () => {}, disabled: true },
               { label: userRole === 'TUTOR' ? 'View Sessions' : 'Manage Sessions', onClick: () => window.location.href = `/sessions?student_id=${student.id}` },
               ...(userRole !== 'TUTOR' ? [
                 { label: 'Edit Meet Link', onClick: () => openModal('meet_link', student) },

@@ -16,6 +16,8 @@ const ALLOWED_DURATIONS = [
 
 const MEET_PREFIX = 'https://meet.google.com/';
 
+const isHttpsUrl = (value) => /^https:\/\/\S+$/i.test((value || '').trim());
+
 export default function SessionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const studentIdQuery = searchParams.get('student_id');
@@ -44,10 +46,10 @@ export default function SessionsPage() {
   // Form states for creating/editing
   const [createStudentId, setCreateStudentId] = useState('');
   const [createTitle, setCreateTitle] = useState('');
-  const [createStartTime, setCreateStartTime] = useState('');
-  const [createDuration, setCreateDuration] = useState(1.0);
   const [isSeries, setIsSeries] = useState(false);
-  const [seriesCount, setSeriesCount] = useState(4); // Default 4 sessions in a series
+  // Each class in a booking carries its own date/time + duration. Single
+  // bookings use the first row; series uses every row.
+  const [classRows, setClassRows] = useState([{ startTime: '', duration: 1.0 }]);
 
   // Form states for rescheduling
   const [rescheduleTime, setRescheduleTime] = useState('');
@@ -117,10 +119,12 @@ export default function SessionsPage() {
     if (type === 'create') {
       setCreateStudentId(selectedStudentId);
       setCreateTitle('');
-      setCreateStartTime('');
-      setCreateDuration(1.0);
       setIsSeries(false);
-      setSeriesCount(4);
+      setClassRows([{ startTime: '', duration: 1.0 }]);
+    } else if (type === 'attend' && session) {
+      setRecLink(session.recording_link || '');
+      setNotesLink(session.notes_link || '');
+      setHwLink(session.homework_link || '');
     } else if (type === 'reschedule' && session) {
       // Local time formatting for datetime-local input
       const localTime = new Date(session.start_time);
@@ -149,38 +153,40 @@ export default function SessionsPage() {
     setModalError('');
   };
 
+  const addClassRow = () => {
+    setClassRows(prev => (prev.length >= 20 ? prev : [...prev, { startTime: '', duration: 1.0 }]));
+  };
+
+  const removeClassRow = (index) => {
+    setClassRows(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  };
+
+  const updateClassRow = (index, field, value) => {
+    setClassRows(prev => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  };
+
   const handleCreateSession = async (e) => {
     e.preventDefault();
     if (!createStudentId) {
       setModalError('Please select a student.');
       return;
     }
-    if (!createStartTime) {
-      setModalError('Please select a start time.');
+
+    // Single bookings use only the first row; a series uses every row, each
+    // with its own date/time + duration.
+    const rows = isSeries ? classRows : classRows.slice(0, 1);
+    if (rows.some(r => !r.startTime)) {
+      setModalError('Please set a date & time for every class.');
       return;
     }
 
     setSaving(true);
     setModalError('');
 
-    // Generate items array based on series settings
-    const items = [];
-    const baseDate = new Date(createStartTime);
-    
-    if (isSeries) {
-      for (let i = 0; i < seriesCount; i++) {
-        const nextTime = new Date(baseDate.getTime() + i * 7 * 24 * 60 * 60 * 1000);
-        items.push({
-          start_time: nextTime.toISOString(),
-          duration_hours: Number(createDuration)
-        });
-      }
-    } else {
-      items.push({
-        start_time: baseDate.toISOString(),
-        duration_hours: Number(createDuration)
-      });
-    }
+    const items = rows.map(r => ({
+      start_time: new Date(r.startTime).toISOString(),
+      duration_hours: Number(r.duration)
+    }));
 
     try {
       await api.post('/api/sessions/', {
@@ -286,19 +292,34 @@ export default function SessionsPage() {
     }
   };
 
-  const handleMarkAttended = async (session) => {
-    if (!window.confirm(`Are you sure you want to mark "${session.title}" as Attended?`)) {
+  const handleMarkAttended = async (e) => {
+    e.preventDefault();
+
+    // Match the staff flow: recording, notes, and homework are captured and
+    // required at the moment a class is marked attended.
+    const links = [recLink, notesLink, hwLink].map(l => l.trim());
+    if (links.some(l => !isHttpsUrl(l))) {
+      setModalError('All three links are required and must be valid https:// URLs.');
       return;
     }
-    
+
+    setSaving(true);
+    setModalError('');
+
     try {
       await api.put('/api/sessions/', {
-        id: session.id,
-        status: 'ATTENDED'
+        id: activeSession.id,
+        status: 'ATTENDED',
+        recording_link: links[0],
+        notes_link: links[1],
+        homework_link: links[2]
       });
       fetchSessions();
+      closeModal();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update session status.');
+      setModalError(err.response?.data?.error || 'Failed to mark session attended.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -544,7 +565,7 @@ export default function SessionsPage() {
                           <StaffActionsDropdown
                             items={[
                               ...(activeTab === 'scheduled' ? [
-                                { label: 'Mark Attended', onClick: () => handleMarkAttended(session) },
+                                { label: 'Mark Attended', onClick: () => openModal('attend', session) },
                                 { label: 'Reschedule', onClick: () => openModal('reschedule', session) },
                               ] : []),
                               { label: 'Edit Resource Links', onClick: () => openModal('links', session) },
@@ -604,34 +625,8 @@ export default function SessionsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Start Date & Time</label>
-                    <input
-                      type="datetime-local"
-                      value={createStartTime}
-                      onChange={(e) => setCreateStartTime(e.target.value)}
-                      className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Duration</label>
-                    <select
-                      value={createDuration}
-                      onChange={(e) => setCreateDuration(Number(e.target.value))}
-                      className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
-                    >
-                      {ALLOWED_DURATIONS.map(d => (
-                        <option key={d.value} value={d.value}>{d.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Series scheduling checkbox */}
-                <div className="flex items-center gap-2.5 pt-1.5">
+                {/* Series toggle */}
+                <div className="flex items-center gap-2.5 pt-0.5">
                   <input
                     id="is-series"
                     type="checkbox"
@@ -640,28 +635,67 @@ export default function SessionsPage() {
                     className="rounded border-zinc-700 bg-zinc-950 text-white focus:ring-white/20"
                   />
                   <label htmlFor="is-series" className="text-xs font-semibold text-zinc-300 select-none cursor-pointer">
-                    Recurring Series (Weekly classes)
+                    Series (schedule multiple classes)
                   </label>
                 </div>
 
-                {isSeries && (
-                  <div className="space-y-1.5 bg-white/[0.02] border border-white/5 rounded-lg p-3">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-zinc-400 font-bold uppercase tracking-wider">Number of classes</span>
-                      <input
-                        type="number"
-                        min="2"
-                        max="20"
-                        value={seriesCount}
-                        onChange={(e) => setSeriesCount(Math.min(20, Math.max(2, parseInt(e.target.value) || 2)))}
-                        className="w-16 px-2 py-1 text-center bg-white/10 border border-white/10 rounded-md text-white font-semibold text-xs"
-                      />
+                {/* Per-class rows: each class has its own date/time + duration */}
+                <div className="space-y-3">
+                  {(isSeries ? classRows : classRows.slice(0, 1)).map((row, index) => (
+                    <div key={index} className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-2">
+                      {isSeries && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Class {index + 1}</span>
+                          {classRows.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeClassRow(index)}
+                              className="text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+                              aria-label="Remove class"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Date & Time</label>
+                          <input
+                            type="datetime-local"
+                            value={row.startTime}
+                            onChange={(e) => updateClassRow(index, 'startTime', e.target.value)}
+                            className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Duration</label>
+                          <select
+                            value={row.duration}
+                            onChange={(e) => updateClassRow(index, 'duration', Number(e.target.value))}
+                            className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                          >
+                            {ALLOWED_DURATIONS.map(d => (
+                              <option key={d.value} value={d.value}>{d.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-[10px] text-zinc-500 m-0">
-                      Creates {seriesCount} classes scheduled at weekly intervals starting from the selected date.
-                    </p>
-                  </div>
-                )}
+                  ))}
+
+                  {isSeries && (
+                    <button
+                      type="button"
+                      onClick={addClassRow}
+                      disabled={classRows.length >= 20}
+                      className="w-full py-2 border border-dashed border-white/15 rounded-lg text-xs font-semibold text-zinc-400 hover:text-white hover:border-white/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Class ({classRows.length}/20)
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex justify-end gap-3 pt-3">
                   <button
@@ -679,6 +713,75 @@ export default function SessionsPage() {
                   >
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                     Create {isSeries ? 'Series' : 'Session'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Mark Attended Modal — captures required resource links */}
+          {modalType === 'attend' && (
+            <div className="w-full max-w-md bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
+              <h3 className="text-base font-semibold text-white m-0">Mark Session Attended</h3>
+              <p className="text-xs text-zinc-400 mt-1 mb-6">{activeSession?.title}</p>
+
+              <form onSubmit={handleMarkAttended} className="space-y-4">
+                {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 m-0">{modalError}</p>}
+
+                <p className="text-[11px] text-zinc-500 m-0">All three links are required to mark this class attended.</p>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Class Recording Link</label>
+                  <input
+                    type="url"
+                    placeholder="https://drive.google.com/..."
+                    value={recLink}
+                    onChange={(e) => setRecLink(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Class Notes Link</label>
+                  <input
+                    type="url"
+                    placeholder="https://docs.google.com/..."
+                    value={notesLink}
+                    onChange={(e) => setNotesLink(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Homework Assignment Link</label>
+                  <input
+                    type="url"
+                    placeholder="https://classroom.google.com/..."
+                    value={hwLink}
+                    onChange={(e) => setHwLink(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/[0.04] border border-white/10 rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20"
+                    required
+                  />
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-white border border-white/10 rounded-lg hover:bg-white/10 transition-all"
+                    disabled={saving}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-white hover:bg-zinc-200 text-black text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5"
+                    disabled={saving}
+                  >
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Mark Attended
                   </button>
                 </div>
               </form>

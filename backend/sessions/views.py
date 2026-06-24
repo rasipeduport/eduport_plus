@@ -11,9 +11,11 @@ from rest_framework.permissions import IsAuthenticated
 
 from students.models import Student
 from activity.utils import log_activity
+from core.authentication import CSRFExemptSessionAuthentication
 from core.permissions import IsStaffOrSelfStudent
 from core.querysets import scope_sessions_by_role
 from core.students import resolve_selected_student
+from core.pagination import paginate_queryset
 from .models import Session, SessionStatusChoices
 from .serializers import SessionSerializer
 from .services import (
@@ -35,6 +37,7 @@ class SessionsView(APIView):
     POST: Create one or more sessions.
     PUT: Update a single session.
     """
+    authentication_classes = [CSRFExemptSessionAuthentication]
     permission_classes = [IsAuthenticated, IsStaffOrSelfStudent]
 
     def get(self, request, *args, **kwargs):
@@ -50,7 +53,13 @@ class SessionsView(APIView):
         else:
             queryset = scope_sessions_by_role(queryset, request.user)
 
-        serializer = SessionSerializer(queryset, many=True)
+        # Opt-in pagination: full list by default, sliced when ?page= is given.
+        page_items, meta = paginate_queryset(request, queryset)
+        source = queryset if page_items is None else page_items
+
+        serializer = SessionSerializer(source, many=True)
+        if meta is not None:
+            return Response({"sessions": serializer.data, **meta}, status=status.HTTP_200_OK)
         return Response({"sessions": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request, *args, **kwargs):
@@ -232,6 +241,50 @@ class SessionsView(APIView):
             )
 
         role = request.user.role
+
+        # Students may only rate their own (currently selected) student's sessions.
+        # They cannot change status, links, tutor, or schedule.
+        if role == 'STUDENT':
+            selected = resolve_selected_student(request)
+            if not selected or session.student_id != selected.id:
+                return Response(
+                    {"error": "Forbidden", "message": "You can only rate your own sessions."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                rating = int(data.get("rating"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "A rating between 1 and 5 is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if rating < 1 or rating > 5:
+                return Response(
+                    {"error": "A rating between 1 and 5 is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            before_rating = session.rating
+            session.rating = rating
+            session.save(update_fields=['rating'])
+
+            if before_rating != rating:
+                log_activity(
+                    action='session.rate',
+                    entity_type='session',
+                    entity_id=str(session.id),
+                    entity_label=session.title,
+                    student=session.student,
+                    changes={"rating": {"old": before_rating, "new": rating}},
+                    request=request,
+                )
+
+            return Response(
+                {"success": True, "session": SessionSerializer(session).data},
+                status=status.HTTP_200_OK
+            )
+
         if role == 'MENTOR' and session.student.mentor != request.user:
             return Response(
                 {"error": "Forbidden", "message": "You can only edit sessions for your allocated students."},
@@ -384,6 +437,7 @@ class CancelSeriesView(APIView):
     POST: Cancel a scheduled class within a series, shifting/renumbering subsequent classes,
     and appending a make-up class to the end of the series.
     """
+    authentication_classes = [CSRFExemptSessionAuthentication]
     permission_classes = [IsAuthenticated, IsStaffOrSelfStudent]
 
     def post(self, request, *args, **kwargs):

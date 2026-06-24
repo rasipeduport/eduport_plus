@@ -9,8 +9,24 @@ from core.permissions import IsAdminOrMentor
 from activity.utils import log_activity
 from .models import Invitation, InvitationStatusChoices, InvitationRoleChoices
 from .sheets import GoogleSheetsService
+from students.models import Student
 
 User = get_user_model()
+
+
+def _find_student_invitation(email, student_code, status_filter=None):
+    """
+    Find the invitation for one specific child (a parent email may own several).
+    Optionally restrict to a given status (e.g. PENDING).
+    """
+    qs = Invitation.objects.filter(
+        email=email,
+        role=InvitationRoleChoices.STUDENT,
+        extra_data__student_code=student_code,
+    )
+    if status_filter is not None:
+        qs = qs.filter(status=status_filter)
+    return qs.first()
 
 class LookupStudentView(APIView):
     """
@@ -51,8 +67,23 @@ class LookupStudentView(APIView):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
 
-        # Check if the user is already registered
-        if User.objects.filter(email=email).exists():
+        student_code = student_data.get("student_code")
+
+        # If this exact child is already enrolled, there is nothing to invite.
+        if student_code and Student.objects.filter(student_code=student_code).exists():
+            return Response(
+                {
+                    "error": "STUDENT_ALREADY_ONBOARDED",
+                    "message": f"A student with code '{student_code}' is already enrolled.",
+                    "student_data": student_data
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # A parent account (role STUDENT) may own several children, so a
+        # registered STUDENT email is fine — only a staff account blocks reuse.
+        clashing_user = User.objects.filter(email=email).first()
+        if clashing_user and clashing_user.role != InvitationRoleChoices.STUDENT:
             return Response(
                 {
                     "error": "USER_ALREADY_REGISTERED",
@@ -62,23 +93,23 @@ class LookupStudentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if an invitation already exists
-        invitation = Invitation.objects.filter(email=email).first()
+        # A pending invitation for THIS child can be edited rather than recreated.
+        invitation = _find_student_invitation(email, student_code)
         if invitation:
             if invitation.status == InvitationStatusChoices.ACCEPTED:
                 return Response(
                     {
                         "error": "INVITATION_ALREADY_ACCEPTED",
-                        "message": f"An invitation for '{email}' has already been accepted.",
+                        "message": f"An invitation for '{email}' (code {student_code}) has already been accepted.",
                         "student_data": student_data
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             return Response(
                 {
                     "status": "exists",
-                    "message": f"A pending invitation already exists for '{email}'. You can update it by submitting details.",
+                    "message": f"A pending invitation already exists for this student. You can update it by submitting details.",
                     "student_data": student_data,
                     "invitation": {
                         "id": invitation.id,
@@ -91,7 +122,7 @@ class LookupStudentView(APIView):
                 status=status.HTTP_200_OK
             )
 
-        # No invitation exists, return the sheet data so the admin can proceed
+        # No invitation exists for this child, return the sheet data to proceed.
         return Response(
             {
                 "status": "found",
@@ -163,29 +194,29 @@ class CreateInvitationView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Double check existing user
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {"error": "USER_ALREADY_REGISTERED", "message": f"User with email '{email}' is already registered."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         # Create or update the Invitation whitelist record
         with transaction.atomic():
-            invitation = Invitation.objects.filter(email=email).first()
-
-            if invitation and invitation.status == InvitationStatusChoices.ACCEPTED:
-                return Response(
-                    {"error": "INVITATION_ALREADY_ACCEPTED", "message": "This invitation has already been accepted."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             if role == "STUDENT":
                 student_code = data.get("student_code")
                 full_name = data.get("full_name")
                 if not student_code or not full_name:
                     return Response(
                         {"error": "INVALID_INPUT", "message": "student_code and full_name are required fields for students."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # The exact child (by code) must not already be enrolled.
+                if Student.objects.filter(student_code=student_code).exists():
+                    return Response(
+                        {"error": "STUDENT_ALREADY_ONBOARDED", "message": f"A student with code '{student_code}' is already enrolled."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # A registered STUDENT email is the parent; only a staff account blocks reuse.
+                clashing_user = User.objects.filter(email=email).first()
+                if clashing_user and clashing_user.role != InvitationRoleChoices.STUDENT:
+                    return Response(
+                        {"error": "USER_ALREADY_REGISTERED", "message": f"User with email '{email}' is already registered."},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
@@ -220,13 +251,30 @@ class CreateInvitationView(APIView):
                     "tutor_id": tutor_id,
                     "meet_link": data.get("meet_link", "")
                 }
+
+                # Match an existing PENDING invitation for THIS child only, so a
+                # second child for the same parent email creates a new record.
+                invitation = _find_student_invitation(email, student_code)
             else:
-                # Staff roles (ADMIN, MENTOR, TUTOR)
+                # Staff roles (ADMIN, MENTOR, TUTOR) are 1:1 with an email.
+                if User.objects.filter(email=email).exists():
+                    return Response(
+                        {"error": "USER_ALREADY_REGISTERED", "message": f"User with email '{email}' is already registered."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
                 full_name = data.get("full_name", "")
                 extra_data = {
                     "full_name": full_name,
                     "mobile_number": data.get("mobile_number", "")
                 }
+                invitation = Invitation.objects.filter(email=email).first()
+
+            if invitation and invitation.status == InvitationStatusChoices.ACCEPTED:
+                return Response(
+                    {"error": "INVITATION_ALREADY_ACCEPTED", "message": "This invitation has already been accepted."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             if invitation:
                 invitation.role = role
@@ -279,19 +327,24 @@ class CreateInvitationView(APIView):
             )
 
     def patch(self, request, *args, **kwargs):
+        # Identify by id when provided (a parent email may have several invites);
+        # fall back to old_email for backward compatibility.
+        invite_id = request.data.get("id")
         old_email = request.data.get("old_email")
         new_email = request.data.get("new_email")
 
-        if not old_email or not new_email:
+        if not new_email or (not invite_id and not old_email):
             return Response(
-                {"error": "INVALID_INPUT", "message": "Both old_email and new_email are required."},
+                {"error": "INVALID_INPUT", "message": "new_email and one of id or old_email are required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        old_email = old_email.strip().lower()
         new_email = new_email.strip().lower()
 
-        invitation = Invitation.objects.filter(email=old_email).first()
+        if invite_id:
+            invitation = Invitation.objects.filter(id=invite_id).first()
+        else:
+            invitation = Invitation.objects.filter(email=old_email.strip().lower()).first()
         if not invitation:
             return Response(
                 {"error": "NOT_FOUND", "message": "Invitation not found."},
@@ -310,13 +363,24 @@ class CreateInvitationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if Invitation.objects.filter(email=new_email).exclude(id=invitation.id).exists():
+        old_email_value = invitation.email
+
+        # A genuine duplicate is the SAME child (student_code) under the new email;
+        # staff invites collide on email alone.
+        code = (invitation.extra_data or {}).get("student_code")
+        clash = Invitation.objects.filter(email=new_email).exclude(id=invitation.id)
+        if invitation.role == InvitationRoleChoices.STUDENT and code:
+            clash = clash.filter(extra_data__student_code=code)
+        if clash.exists():
             return Response(
-                {"error": "INVITATION_EXISTS", "message": "An invitation with the new email already exists."},
+                {"error": "INVITATION_EXISTS", "message": "An invitation for this student with the new email already exists."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if User.objects.filter(email=new_email).exists():
+        # A registered STUDENT email may still own more children; only a staff
+        # account (or a non-student invite targeting it) blocks the change.
+        clashing_user = User.objects.filter(email=new_email).first()
+        if clashing_user and (invitation.role != InvitationRoleChoices.STUDENT or clashing_user.role != InvitationRoleChoices.STUDENT):
             return Response(
                 {"error": "USER_ALREADY_REGISTERED", "message": "A user with the new email is already registered."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -338,25 +402,30 @@ class CreateInvitationView(APIView):
             entity_type='invitation',
             entity_id=str(invitation.id),
             entity_label=new_email,
-            changes={"email": {"old": old_email, "new": new_email}},
+            changes={"email": {"old": old_email_value, "new": new_email}},
             request=request,
         )
 
         return Response({
             "status": "updated",
-            "message": f"Invitation email updated from {old_email} to {new_email}."
+            "message": f"Invitation email updated from {old_email_value} to {new_email}."
         }, status=status.HTTP_200_OK)
 
     def delete(self, request, *args, **kwargs):
+        # Identify by id when provided (a parent email may have several invites);
+        # fall back to email for backward compatibility.
+        invite_id = request.data.get("id")
         email = request.data.get("email")
-        if not email:
+        if not invite_id and not email:
             return Response(
-                {"error": "INVALID_INPUT", "message": "email is required in delete payload."},
+                {"error": "INVALID_INPUT", "message": "id or email is required in delete payload."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        email = email.strip().lower()
-        invitation = Invitation.objects.filter(email=email).first()
+        if invite_id:
+            invitation = Invitation.objects.filter(id=invite_id).first()
+        else:
+            invitation = Invitation.objects.filter(email=email.strip().lower()).first()
         if not invitation:
             return Response(
                 {"error": "NOT_FOUND", "message": "Invitation not found."},

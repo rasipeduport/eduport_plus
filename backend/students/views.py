@@ -11,9 +11,11 @@ from invitations.models import Invitation, InvitationStatusChoices
 from sessions.models import Session, SessionStatusChoices
 from sessions.serializers import SessionSerializer
 from activity.utils import log_activity
+from core.authentication import CSRFExemptSessionAuthentication
 from core.permissions import IsStaffUser, IsStudentUser
 from core.querysets import scope_students_by_role
 from core.students import get_account_students, resolve_selected_student
+from core.pagination import paginate_queryset
 
 User = get_user_model()
 
@@ -150,6 +152,7 @@ class StudentListView(APIView):
     PUT /api/students/ - Update student details (meet link, class quota, status)
       - ADMIN/MENTOR: Allowed.
     """
+    authentication_classes = [CSRFExemptSessionAuthentication]
     permission_classes = [IsAuthenticated, IsStaffUser]
 
     def get(self, request, *args, **kwargs):
@@ -157,14 +160,18 @@ class StudentListView(APIView):
         is_tutor = role == 'TUTOR'
         is_mentor = role == 'MENTOR'
         
-        queryset = Student.objects.all().order_by('student_code')
+        queryset = Student.objects.select_related('profile', 'mentor', 'tutor').order_by('student_code')
         if is_tutor:
             queryset = queryset.filter(tutor=request.user, status__in=['ACTIVE', 'INACTIVE'])
         elif is_mentor:
             queryset = queryset.filter(mentor=request.user)
-        
+
+        # Opt-in pagination: full list by default, sliced when ?page= is given.
+        page_items, meta = paginate_queryset(request, queryset)
+        source = queryset if page_items is None else page_items
+
         data = []
-        for s in queryset.select_related('profile', 'mentor', 'tutor'):
+        for s in source:
             data.append({
                 "id": str(s.id),
                 "student_code": s.student_code,
@@ -197,6 +204,9 @@ class StudentListView(APIView):
                     "email": s.tutor.email
                 } if s.tutor else None,
             })
+
+        if meta is not None:
+            return Response({"results": data, **meta}, status=status.HTTP_200_OK)
         return Response(data, status=status.HTTP_200_OK)
 
     def put(self, request, *args, **kwargs):
