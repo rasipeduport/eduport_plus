@@ -1,59 +1,32 @@
 import uuid
 import logging
-from datetime import datetime, timedelta
+import re
+from datetime import timedelta
 from django.db import transaction
-from django.db.models import Q
-from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework.permissions import IsAuthenticated
 
 from students.models import Student
 from activity.utils import log_activity
+from core.permissions import IsStaffOrSelfStudent
+from core.querysets import scope_sessions_by_role
 from .models import Session, SessionStatusChoices
 from .serializers import SessionSerializer
+from .services import (
+    ALLOWED_DURATIONS,
+    MAX_SERIES_ITEMS,
+    normalize_title,
+    parse_iso_datetime,
+    calculate_credits_used,
+    find_conflict,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-ALLOWED_DURATIONS = [0.5, 1, 1.5, 2]
-MAX_SERIES_ITEMS = 20
-
-def normalize_title(title):
-    if not title:
-        return ""
-    return " ".join(title.split())
-
-def parse_iso_datetime(dt_str):
-    try:
-        # standard ISO format: 2026-06-17T12:00:00Z -> timezone-aware datetime
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        # Make sure it is timezone-aware
-        if timezone.is_naive(dt):
-            dt = timezone.make_aware(dt, timezone.utc)
-        return dt
-    except Exception:
-        return None
-
-class IsStaffOrSelfStudent(BasePermission):
-    """
-    Allow staff roles full access; students can only retrieve/GET their own sessions.
-    """
-    def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        
-        # Staff roles
-        if request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser:
-            return True
-            
-        # Student role: GET only
-        if request.user.role == 'STUDENT' and request.method == 'GET':
-            return True
-            
-        return False
 
 class SessionsView(APIView):
     """
@@ -65,18 +38,16 @@ class SessionsView(APIView):
 
     def get(self, request, *args, **kwargs):
         queryset = Session.objects.select_related('student', 'student__profile', 'tutor').order_by('-start_time')
-        
-        # If the requester is a student, restrict to their own sessions
-        role = request.user.role
-        if role == 'STUDENT':
+
+        # If the requester is a student, restrict to their own sessions;
+        # mentors/tutors are scoped to their allocated students.
+        if request.user.role == 'STUDENT':
             student = Student.objects.filter(profile=request.user).first()
             if not student:
                 return Response({"sessions": []}, status=status.HTTP_200_OK)
             queryset = queryset.filter(student=student)
-        elif role == 'MENTOR':
-            queryset = queryset.filter(student__mentor=request.user)
-        elif role == 'TUTOR':
-            queryset = queryset.filter(student__tutor=request.user)
+        else:
+            queryset = scope_sessions_by_role(queryset, request.user)
 
         serializer = SessionSerializer(queryset, many=True)
         return Response({"sessions": serializer.data}, status=status.HTTP_200_OK)
@@ -183,11 +154,7 @@ class SessionsView(APIView):
             series_total += float(duration)
 
         # 2. Check Quota Balance
-        existing_sessions = Session.objects.filter(student=student).exclude(status=SessionStatusChoices.CANCELLED)
-        credits_used = 0.0
-        for s in existing_sessions:
-            credits_used += (s.end_time - s.start_time).total_seconds() / 3600.0
-
+        credits_used = calculate_credits_used(student)
         total_quota = float(student.total_class_quota)
         remaining = total_quota - credits_used
 
@@ -197,19 +164,11 @@ class SessionsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Conflict Checks (overlap check: start_time < other.end_time and end_time > other.start_time)
-        # Filters: Same student OR same tutor
+        # 3. Conflict Checks (overlap: same student OR same tutor)
         for i, v in enumerate(validated_items):
             label = f"Class {i + 1}" if is_series else "This session"
-            conflicts = Session.objects.filter(
-                ~Q(status=SessionStatusChoices.CANCELLED),
-                Q(student=student) | Q(tutor=student.tutor),
-                start_time__lt=v["end_time"],
-                end_time__gt=v["start_time"]
-            )
-            
-            if conflicts.exists():
-                conflict = conflicts.first()
+            conflict = find_conflict(student, student.tutor, v["start_time"], v["end_time"])
+            if conflict:
                 return Response(
                     {"error": f"{label} conflicts with \"{conflict.title}\". Choose a different time."},
                     status=status.HTTP_409_CONFLICT
@@ -327,22 +286,12 @@ class SessionsView(APIView):
                 )
             new_end_time = new_start_time + timedelta(hours=duration)
 
-        # Check Scheduling Conflicts on Rescheduling
+        # Check Scheduling Conflicts on Rescheduling (same student OR same tutor)
         if new_start_time and new_end_time:
-            # Overlap filters: same student OR same tutor of the session
-            conflict_filters = Q(student=session.student)
-            if session.tutor:
-                conflict_filters |= Q(tutor=session.tutor)
-            
-            conflicts = Session.objects.filter(
-                ~Q(status=SessionStatusChoices.CANCELLED),
-                conflict_filters,
-                start_time__lt=new_end_time,
-                end_time__gt=new_start_time
-            ).exclude(id=session.id)
-
-            if conflicts.exists():
-                conflict = conflicts.first()
+            conflict = find_conflict(
+                session.student, session.tutor, new_start_time, new_end_time, exclude_id=session.id
+            )
+            if conflict:
                 return Response(
                     {"error": f"Time conflict with \"{conflict.title}\". Choose a different time."},
                     status=status.HTTP_409_CONFLICT
@@ -535,20 +484,10 @@ class CancelSeriesView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Conflict check for the new make-up session
+        # Conflict check for the new make-up session (same student OR same tutor)
         new_last_end_time = new_last_start_time + timedelta(hours=new_last_duration)
-        makeup_conflict_filters = Q(student=student)
-        if student.tutor:
-            makeup_conflict_filters |= Q(tutor=student.tutor)
-        
-        conflicts = Session.objects.filter(
-            ~Q(status=SessionStatusChoices.CANCELLED),
-            makeup_conflict_filters,
-            start_time__lt=new_last_end_time,
-            end_time__gt=new_last_start_time
-        )
-        if conflicts.exists():
-            conflict = conflicts.first()
+        conflict = find_conflict(student, student.tutor, new_last_start_time, new_last_end_time)
+        if conflict:
             return Response(
                 {"error": f"Make-up class conflicts with \"{conflict.title}\". Choose a different time."},
                 status=status.HTTP_409_CONFLICT
@@ -568,14 +507,12 @@ class CancelSeriesView(APIView):
                 new_num = old_num - 1
                 
                 # Replace class number suffix: e.g. "Title - Class 3" -> "Title - Class 2"
-                import re
                 title_base = re.sub(r'\s*-\s*[Cc]lass\s+\d+$', '', s.title)
                 s.title = f"{title_base} - Class {new_num}"
                 s.class_number = new_num
                 s.save()
 
             # 3. Create the make-up session at the end of the series
-            import re
             target_base_title = re.sub(r'\s*-\s*[Cc]lass\s+\d+$', '', target_session.title)
             new_session = Session.objects.create(
                 student=student,

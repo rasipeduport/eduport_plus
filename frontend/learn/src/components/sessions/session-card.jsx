@@ -1,40 +1,9 @@
-import { useState } from 'react';
-import { Calendar, Clock, User, Play, FileText, BookOpen, ChevronDown, Star, CheckCircle2 } from 'lucide-react';
+import { Calendar, Clock, User, GraduationCap, Play, FileText, BookOpen, ChevronDown, Star, CheckCircle2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Card } from '../ui/card';
 import { cn } from '../../lib/utils';
-import api from '../../lib/api';
-import { motion, AnimatePresence } from 'framer-motion';
-
-function formatSessionDateTime(startIso, endIso) {
-  if (!startIso || !endIso) return { dateLabel: '', timeLabel: '' };
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const now = new Date();
-
-  const isToday = start.toDateString() === now.toDateString();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const isTomorrow = start.toDateString() === tomorrow.toDateString();
-
-  let dateLabel;
-  if (isToday) dateLabel = 'Today';
-  else if (isTomorrow) dateLabel = 'Tomorrow';
-  else
-    dateLabel = new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    }).format(start);
-
-  const timeFmt = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-  const timeLabel = `${timeFmt.format(start)} - ${timeFmt.format(end)}`;
-
-  return { dateLabel, timeLabel };
-}
+import { formatSessionDateTime } from '../../lib/formatting';
+import { useSessionRating } from '../../hooks/useSessionRating';
 
 export function SessionCard({ session, isExpanded, onToggle }) {
   const attended = session.status === 'attended';
@@ -72,35 +41,7 @@ export function SessionCard({ session, isExpanded, onToggle }) {
       ].filter((r) => r.href)
     : [];
 
-  const [isRated, setIsRated] = useState(!!session.rating);
-  const [rating, setRating] = useState(session.rating || 0);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-
-  const handleRate = async (value) => {
-    if (isRated || isSubmitting) return;
-
-    setRating(value);
-    setIsSubmitting(true);
-
-    try {
-      await api.put('/api/sessions/', {
-        id: session.id,
-        rating: value
-      });
-      setIsRated(true);
-      setShowSuccess(true);
-      setTimeout(() => {
-        setShowSuccess(false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to rate session:', err);
-      setRating(0);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const { isRated, rating, hoverRating, setHoverRating, isSubmitting, showSuccess, handleRate } = useSessionRating(session);
 
   return (
     <Card padding="md" className="transition-all duration-200">
@@ -148,6 +89,12 @@ export function SessionCard({ session, isExpanded, onToggle }) {
                   <span className="inline-flex items-center gap-1">
                     <User className="h-3.5 w-3.5" />
                     {session.tutor_profile.full_name}
+                  </span>
+                )}
+                {session.students?.mentor_profile?.full_name && (
+                  <span className="inline-flex items-center gap-1">
+                    <GraduationCap className="h-3.5 w-3.5" />
+                    {session.students.mentor_profile.full_name}
                   </span>
                 )}
               </div>

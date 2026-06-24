@@ -13,6 +13,7 @@ from google.auth.transport import requests as google_requests
 
 from students.models import Student
 from activity.models import ActivityLog
+from core.authentication import CSRFExemptSessionAuthentication
 from .serializers import UserSerializer, StudentSerializer
 from .services import UserProvisioningService
 
@@ -170,12 +171,6 @@ class GoogleLoginView(APIView):
             status=status.HTTP_201_CREATED if is_new_user else status.HTTP_200_OK
         )
 
-from rest_framework.authentication import SessionAuthentication
-
-class CSRFExemptSessionAuthentication(SessionAuthentication):
-    def enforce_csrf(self, request):
-        return  # Skip CSRF check for logout
-
 class LogoutView(APIView):
     """
     Logs out the authenticated user session.
@@ -228,123 +223,82 @@ class MeView(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
-class MentorListView(APIView):
+class BaseRoleListView(APIView):
     """
-    GET /api/mentors/
-    Returns list of active mentors with their assigned student counts.
-    If ?all=true is passed, returns active mentors + pending mentor invitations.
+    Lists active users of a single role with their assigned-student counts.
+
+    Subclasses set ``role`` and ``response_key``; roles that own students set
+    ``count_relation`` (the reverse FK used to count allocations) which also
+    enables the dropdown-compatibility mode (a slim payload unless ?all=true).
     """
     permission_classes = [IsAuthenticated]
+    role = None
+    response_key = None
+    count_relation = None
+
+    def _serialize(self, u):
+        return {
+            "kind": "active",
+            "id": str(u.id),
+            "full_name": u.full_name or "",
+            "email": u.email,
+            "avatar_url": u.avatar_url or None,
+            "mobile_number": u.mobile_number or "",
+            "created_at": u.created_at.isoformat(),
+            "invited_by_profile": {
+                "id": str(u.invited_by.id),
+                "full_name": u.invited_by.full_name or "",
+                "email": u.invited_by.email
+            } if u.invited_by else None,
+            "assigned_students_count": getattr(u, 'assigned_students_count', None)
+        }
 
     def get(self, request, *args, **kwargs):
         from django.db.models import Count
-        from invitations.models import Invitation, InvitationStatusChoices
-        
-        # Query active mentors
-        mentors = User.objects.filter(role='MENTOR').annotate(
-            assigned_students_count=Count('mentored_students')
-        ).order_by('-created_at')
-        
-        active_data = [
-            {
-                "kind": "active",
-                "id": str(m.id),
-                "full_name": m.full_name or "",
-                "email": m.email,
-                "avatar_url": m.avatar_url or None,
-                "mobile_number": m.mobile_number or "",
-                "created_at": m.created_at.isoformat(),
-                "invited_by_profile": {
-                    "id": str(m.invited_by.id),
-                    "full_name": m.invited_by.full_name or "",
-                    "email": m.invited_by.email
-                } if m.invited_by else None,
-                "assigned_students_count": m.assigned_students_count
-            }
-            for m in mentors
-        ]
-        
+
+        queryset = User.objects.filter(role=self.role)
+        if self.count_relation:
+            queryset = queryset.annotate(assigned_students_count=Count(self.count_relation))
+        queryset = queryset.order_by('-created_at')
+
+        active_data = [self._serialize(u) for u in queryset]
+
         # Backward compatibility for dropdown selects (which don't pass ?all=true)
-        if request.GET.get('all') != 'true':
+        if self.count_relation and request.GET.get('all') != 'true':
             return Response(
-                {"mentors": [{"id": d["id"], "full_name": d["full_name"], "email": d["email"]} for d in active_data]},
+                {self.response_key: [{"id": d["id"], "full_name": d["full_name"], "email": d["email"]} for d in active_data]},
                 status=status.HTTP_200_OK
             )
-            
-        return Response({"mentors": active_data}, status=status.HTTP_200_OK)
 
-class TutorListView(APIView):
+        return Response({self.response_key: active_data}, status=status.HTTP_200_OK)
+
+class MentorListView(BaseRoleListView):
+    """
+    GET /api/mentors/
+    Returns list of active mentors with their assigned student counts.
+    If ?all=true is passed, returns the full mentor records.
+    """
+    role = 'MENTOR'
+    response_key = 'mentors'
+    count_relation = 'mentored_students'
+
+class TutorListView(BaseRoleListView):
     """
     GET /api/tutors/
     Returns list of active tutors with their assigned student counts.
     """
-    permission_classes = [IsAuthenticated]
+    role = 'TUTOR'
+    response_key = 'tutors'
+    count_relation = 'tutored_students'
 
-    def get(self, request, *args, **kwargs):
-        from django.db.models import Count
-        
-        # Query active tutors
-        tutors = User.objects.filter(role='TUTOR').annotate(
-            assigned_students_count=Count('tutored_students')
-        ).order_by('-created_at')
-        
-        active_data = [
-            {
-                "kind": "active",
-                "id": str(t.id),
-                "full_name": t.full_name or "",
-                "email": t.email,
-                "avatar_url": t.avatar_url or None,
-                "mobile_number": t.mobile_number or "",
-                "created_at": t.created_at.isoformat(),
-                "invited_by_profile": {
-                    "id": str(t.invited_by.id),
-                    "full_name": t.invited_by.full_name or "",
-                    "email": t.invited_by.email
-                } if t.invited_by else None,
-                "assigned_students_count": t.assigned_students_count
-            }
-            for t in tutors
-        ]
-        
-        # Backward compatibility for dropdown selects (which don't pass ?all=true)
-        if request.GET.get('all') != 'true':
-            return Response(
-                {"tutors": [{"id": d["id"], "full_name": d["full_name"], "email": d["email"]} for d in active_data]},
-                status=status.HTTP_200_OK
-            )
-            
-        return Response({"tutors": active_data}, status=status.HTTP_200_OK)
-
-class AdminListView(APIView):
+class AdminListView(BaseRoleListView):
     """
     GET /api/admins/
     Returns list of active admins.
     """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        admins = User.objects.filter(role='ADMIN').order_by('-created_at')
-        active_data = [
-            {
-                "kind": "active",
-                "id": str(a.id),
-                "full_name": a.full_name or "",
-                "email": a.email,
-                "avatar_url": a.avatar_url or None,
-                "mobile_number": a.mobile_number or "",
-                "created_at": a.created_at.isoformat(),
-                "invited_by_profile": {
-                    "id": str(a.invited_by.id),
-                    "full_name": a.invited_by.full_name or "",
-                    "email": a.invited_by.email
-                } if a.invited_by else None,
-                "assigned_students_count": None
-            }
-            for a in admins
-        ]
-        
-        return Response({"admins": active_data}, status=status.HTTP_200_OK)
+    role = 'ADMIN'
+    response_key = 'admins'
+    count_relation = None
 
 class UserDetailView(APIView):
     """

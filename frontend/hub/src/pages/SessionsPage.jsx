@@ -5,7 +5,7 @@ import {
   BookOpen, Plus, X, Link2, AlertTriangle, RefreshCw, Star, Check
 } from 'lucide-react';
 import api from '../lib/api';
-import StaffActionsDropdown from './StaffActionsDropdown';
+import StaffActionsDropdown from '../components/StaffActionsDropdown';
 
 const ALLOWED_DURATIONS = [
   { label: '30 mins', value: 0.5 },
@@ -433,10 +433,10 @@ export default function SessionsPage() {
               <thead>
                 <tr className="border-b border-[rgba(255,255,255,0.08)] bg-[#0f0f0f]">
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Class Title</th>
-                  <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle w-10"></th>
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Student</th>
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Schedule</th>
                   <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Tutor</th>
+                  <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Mentor</th>
                   {activeTab === 'attended' && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Rating</th>}
                   {activeTab === 'cancelled' && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Cancellation Reason</th>}
                   {activeTab === 'attended' && <th className="h-12 px-4 font-semibold text-xs text-zinc-400 align-middle">Resources</th>}
@@ -447,8 +447,8 @@ export default function SessionsPage() {
                 {filteredSessions.map((session) => {
                   const sName = session.students?.full_name || session.student_profile?.full_name || session.student?.full_name || '—';
                   const sCode = session.students?.student_code || session.student_profile?.student_code || session.student?.student_code || '';
-                  const sAvatar = session.students?.avatar_url;
                   const tName = session.tutor_profile?.full_name || session.tutor?.full_name || 'Not Assigned';
+                  const mName = session.students?.mentor_profile?.full_name || '—';
                   
                   const start = new Date(session.start_time);
                   const end = new Date(session.end_time);
@@ -470,19 +470,6 @@ export default function SessionsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2 px-4 align-middle w-10">
-                        {sAvatar ? (
-                          <img 
-                            src={sAvatar} 
-                            alt={sName} 
-                            className="w-8 h-8 rounded-full object-cover border border-[rgba(255,255,255,0.1)]"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-[#374151] flex items-center justify-center font-semibold text-zinc-700 dark:text-white shrink-0 text-xs">
-                            {sName?.split(' ').map(n => n[0]).join('').substring(0, 2) || 'S'}
-                          </div>
-                        )}
-                      </td>
                       <td className="py-2 px-4 align-middle">
                         <div className="flex flex-col gap-0.5">
                           <span className="font-medium text-white text-sm">{sName}</span>
@@ -502,6 +489,7 @@ export default function SessionsPage() {
                         </div>
                       </td>
                       <td className="py-2 px-4 text-sm text-[#e4e4e7] align-middle">{tName}</td>
+                      <td className="py-2 px-4 text-sm text-[#e4e4e7] align-middle">{mName}</td>
                       
                       {activeTab === 'attended' && (
                         <td className="py-2 px-4 align-middle">

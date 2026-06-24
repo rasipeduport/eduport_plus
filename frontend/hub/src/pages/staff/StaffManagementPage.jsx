@@ -1,15 +1,30 @@
 import { useState, useEffect } from 'react';
 import {
   Loader2, Search, Plus,
-  ArrowUpDown, ChevronDown, Trash, Mail
+  ArrowUpDown, ChevronDown, Trash, Mail, ShieldAlert
 } from 'lucide-react';
 import * as Avatar from '@radix-ui/react-avatar';
-import api from '../lib/api';
-import NewInvitationModal from './NewInvitationModal';
-import StaffActionsDropdown from './StaffActionsDropdown';
+import api from '../../lib/api';
+import { formatDate, EMAIL_RE } from '../../lib/utils';
+import NewInvitationModal from '../../components/NewInvitationModal';
+import StaffActionsDropdown from '../../components/StaffActionsDropdown';
 
-export default function TutorsPage() {
-  const [tutors, setTutors] = useState([]);
+/**
+ * Generic staff (Admin / Mentor / Tutor) management page.
+ *
+ * Behaviour is identical across the three roles; the per-role differences are
+ * supplied via `config`:
+ *   { entityLabel, endpoint, responseKey, initialRole, fallbackInitial, hasStudentsCount }
+ *
+ * `hasStudentsCount` (true for mentors/tutors) adds the "Assigned students"
+ * column and changes the delete dialog's warning. Admins instead get the
+ * "deleting your own account" warning.
+ */
+export default function StaffManagementPage({ config }) {
+  const { entityLabel, endpoint, responseKey, initialRole, fallbackInitial, hasStudentsCount } = config;
+  const entityLower = entityLabel.toLowerCase();
+
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -23,7 +38,7 @@ export default function TutorsPage() {
     mobile_number: true,
     created_at: true,
     invited_by: true,
-    students_count: true,
+    ...(hasStudentsCount ? { students_count: true } : {}),
   });
 
   // Invitation Modal triggers
@@ -31,7 +46,7 @@ export default function TutorsPage() {
 
   // Edit / Delete Modal states
   const [modalType, setModalType] = useState(null); // 'edit_details' | 'delete' | 'edit_email' | 'withdraw'
-  const [activeTutor, setActiveTutor] = useState(null);
+  const [active, setActive] = useState(null);
 
   // Form input states
   const [fullNameVal, setFullNameVal] = useState('');
@@ -48,7 +63,7 @@ export default function TutorsPage() {
 
   useEffect(() => {
     fetchCurrentUser();
-    fetchTutors();
+    fetchRows();
   }, []);
 
   const fetchCurrentUser = async () => {
@@ -60,36 +75,36 @@ export default function TutorsPage() {
     }
   };
 
-  const fetchTutors = async () => {
+  const fetchRows = async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await api.get('/api/tutors/?all=true');
-      setTutors(response.data.tutors || []);
+      const response = await api.get(endpoint);
+      setRows(response.data[responseKey] || []);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to fetch tutor accounts.');
+      setError(err.response?.data?.message || `Failed to fetch ${entityLower} accounts.`);
     } finally {
       setLoading(false);
     }
   };
 
-  const openModal = (type, tutor) => {
+  const openModal = (type, row) => {
     setModalType(type);
-    setActiveTutor(tutor);
+    setActive(row);
     setModalError('');
     setSaving(false);
 
     if (type === 'edit_details') {
-      setFullNameVal(tutor.full_name || '');
-      setMobileNumberVal(tutor.mobile_number || '');
+      setFullNameVal(row.full_name || '');
+      setMobileNumberVal(row.mobile_number || '');
     } else if (type === 'edit_email') {
-      setEditEmailVal(tutor.email);
+      setEditEmailVal(row.email);
     }
   };
 
   const closeModal = () => {
     setModalType(null);
-    setActiveTutor(null);
+    setActive(null);
     setModalError('');
   };
 
@@ -102,14 +117,14 @@ export default function TutorsPage() {
     setSaving(true);
     setModalError('');
     try {
-      await api.patch(`/api/users/${activeTutor.id}/`, {
+      await api.patch(`/api/users/${active.id}/`, {
         full_name: fullNameVal.trim(),
         mobile_number: mobileNumberVal.trim() || null
       });
-      fetchTutors();
+      fetchRows();
       closeModal();
     } catch (err) {
-      setModalError(err.response?.data?.message || 'Failed to update tutor details.');
+      setModalError(err.response?.data?.message || `Failed to update ${entityLower} details.`);
     } finally {
       setSaving(false);
     }
@@ -119,8 +134,8 @@ export default function TutorsPage() {
     setSaving(true);
     setModalError('');
     try {
-      await api.delete(`/api/users/${activeTutor.id}/`);
-      fetchTutors();
+      await api.delete(`/api/users/${active.id}/`);
+      fetchRows();
       closeModal();
     } catch (err) {
       setModalError(err.response?.data?.message || 'Failed to delete user.');
@@ -131,8 +146,7 @@ export default function TutorsPage() {
 
   const handleEditEmail = async (e) => {
     e.preventDefault();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!editEmailVal.trim() || !emailRegex.test(editEmailVal.trim())) {
+    if (!editEmailVal.trim() || !EMAIL_RE.test(editEmailVal.trim())) {
       setModalError('Please enter a valid email address.');
       return;
     }
@@ -140,10 +154,10 @@ export default function TutorsPage() {
     setModalError('');
     try {
       await api.patch('/api/invitations/', {
-        old_email: activeTutor.email,
+        old_email: active.email,
         new_email: editEmailVal.trim().toLowerCase()
       });
-      fetchTutors();
+      fetchRows();
       closeModal();
     } catch (err) {
       setModalError(err.response?.data?.message || 'Failed to update invitation email.');
@@ -157,9 +171,9 @@ export default function TutorsPage() {
     setModalError('');
     try {
       await api.delete('/api/invitations/', {
-        data: { email: activeTutor.email }
+        data: { email: active.email }
       });
-      fetchTutors();
+      fetchRows();
       closeModal();
     } catch (err) {
       setModalError(err.response?.data?.message || 'Failed to withdraw invitation.');
@@ -178,9 +192,9 @@ export default function TutorsPage() {
   };
 
   // Sorting and filtering
-  const filteredTutors = tutors.filter(tutor =>
-    tutor.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tutor.full_name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRows = rows.filter(row =>
+    row.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    row.full_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getSortedData = (dataList) => {
@@ -210,7 +224,7 @@ export default function TutorsPage() {
     setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }));
   };
 
-  if (loading && tutors.length === 0) {
+  if (loading && rows.length === 0) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin text-white" />
@@ -273,7 +287,7 @@ export default function TutorsPage() {
             className="h-10 px-4 bg-white hover:bg-zinc-200 text-zinc-950 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center gap-2 self-stretch sm:self-auto shrink-0 justify-center cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            New Tutor
+            New {entityLabel}
           </button>
         )}
       </div>
@@ -284,7 +298,7 @@ export default function TutorsPage() {
         </div>
       )}
 
-      {/* Tutors Table */}
+      {/* Table */}
       <div className="border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] rounded-xl shadow-xl overflow-x-auto w-full">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
@@ -325,7 +339,7 @@ export default function TutorsPage() {
                     </button>
                   </th>
                 )}
-                {visibleColumns.students_count && (
+                {hasStudentsCount && visibleColumns.students_count && (
                   <th className="h-12 px-6 font-semibold text-xs text-zinc-400 align-middle text-center">
                     <button onClick={() => handleSort('students_count')} className="flex items-center gap-1 mx-auto hover:text-white">
                       Assigned students
@@ -337,31 +351,31 @@ export default function TutorsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredTutors.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
                   <td colSpan="100%" className="py-8 text-center text-zinc-500 text-sm">
-                    No tutor accounts found matching search criteria.
+                    No {entityLower} accounts found matching search criteria.
                   </td>
                 </tr>
               ) : (
-                getSortedData(filteredTutors).map(tutor => {
-                  const initials = tutor.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2) || 'T';
+                getSortedData(filteredRows).map(row => {
+                  const initials = row.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2) || fallbackInitial;
                   return (
                     <tr
-                      key={tutor.id}
+                      key={row.id}
                       className="group hover:bg-[rgba(255,255,255,0.02)] border-b border-[rgba(255,255,255,0.08)] h-[54px] transition-colors"
                     >
                       {visibleColumns.avatar && (
                         <td className="py-2 px-6 align-middle">
-                          {tutor.kind === 'ghost' ? (
+                          {row.kind === 'ghost' ? (
                             <div className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center border border-zinc-700/50">
                               <Mail className="w-4 h-4" />
                             </div>
                           ) : (
                             <Avatar.Root className="relative flex h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[rgba(255,255,255,0.1)]">
                               <Avatar.Image
-                                src={tutor.avatar_url || undefined}
-                                alt={tutor.full_name}
+                                src={row.avatar_url || undefined}
+                                alt={row.full_name}
                                 className="aspect-square h-full w-full object-cover"
                               />
                               <Avatar.Fallback className="flex h-full w-full items-center justify-center rounded-full bg-indigo-950 text-indigo-300 border border-indigo-900/50 text-xs font-semibold">
@@ -373,47 +387,45 @@ export default function TutorsPage() {
                       )}
                       {visibleColumns.full_name && (
                         <td className="py-2 px-6 font-medium text-white text-sm align-middle whitespace-nowrap">
-                          {tutor.kind === 'ghost' ? (
+                          {row.kind === 'ghost' ? (
                             <span className="text-zinc-500 italic font-normal">Invited</span>
                           ) : (
-                            tutor.full_name || <span className="text-zinc-500">—</span>
+                            row.full_name || <span className="text-zinc-500">—</span>
                           )}
                         </td>
                       )}
                       {visibleColumns.email && (
-                        <td className="py-2 px-6 text-white text-sm align-middle whitespace-nowrap">{tutor.email}</td>
+                        <td className="py-2 px-6 text-white text-sm align-middle whitespace-nowrap">{row.email}</td>
                       )}
                       {visibleColumns.mobile_number && (
                         <td className="py-2 px-6 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">
-                          {tutor.kind === 'ghost' ? '—' : (tutor.mobile_number || '—')}
+                          {row.kind === 'ghost' ? '—' : (row.mobile_number || '—')}
                         </td>
                       )}
                       {visibleColumns.created_at && (
                         <td className="py-2 px-6 text-[#a1a1aa] text-sm align-middle whitespace-nowrap">
-                          {tutor.kind === 'ghost' ? '—' : new Date(tutor.created_at).toLocaleDateString('en-US', {
-                            day: 'numeric', month: 'short', year: 'numeric'
-                          })}
+                          {row.kind === 'ghost' ? '—' : formatDate(row.created_at)}
                         </td>
                       )}
                       {visibleColumns.invited_by && (
                         <td className="py-2 px-6 text-zinc-300 text-sm align-middle whitespace-nowrap">
-                          {tutor.invited_by_profile?.full_name || tutor.invited_by_profile?.email || '—'}
+                          {row.invited_by_profile?.full_name || row.invited_by_profile?.email || '—'}
                         </td>
                       )}
-                      {visibleColumns.students_count && (
+                      {hasStudentsCount && visibleColumns.students_count && (
                         <td className="py-2 px-6 text-zinc-300 text-sm align-middle text-center font-mono tabular-nums">
-                          {tutor.kind === 'ghost' ? '—' : (tutor.assigned_students_count ?? 0)}
+                          {row.kind === 'ghost' ? '—' : (row.assigned_students_count ?? 0)}
                         </td>
                       )}
                       <td className="py-2 px-2 align-middle text-right sticky right-0 bg-[#0a0a0a] group-hover:bg-[#111] border-l border-[rgba(255,255,255,0.08)] transition-colors z-10">
                         {currentUser?.role === 'ADMIN' && (
                           <StaffActionsDropdown
-                            items={tutor.kind === 'active' ? [
-                              { label: 'Edit Details', onClick: () => openModal('edit_details', tutor) },
-                              { label: 'Delete Tutor', onClick: () => openModal('delete', tutor), danger: true },
+                            items={row.kind === 'active' ? [
+                              { label: 'Edit Details', onClick: () => openModal('edit_details', row) },
+                              { label: `Delete ${entityLabel}`, onClick: () => openModal('delete', row), danger: true },
                             ] : [
-                              { label: 'Edit Email', onClick: () => openModal('edit_email', tutor) },
-                              { label: 'Withdraw Invitation', onClick: () => openModal('withdraw', tutor), danger: true },
+                              { label: 'Edit Email', onClick: () => openModal('edit_email', row) },
+                              { label: 'Withdraw Invitation', onClick: () => openModal('withdraw', row), danger: true },
                             ]}
                           />
                         )}
@@ -434,7 +446,7 @@ export default function TutorsPage() {
           {modalType === 'edit_details' && (
             <div className="w-full max-w-sm bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
               <h3 className="text-base font-semibold text-white m-0">Edit Details</h3>
-              <p className="text-xs text-zinc-400 mt-1 mb-6">Update name and phone number for {activeTutor?.email}.</p>
+              <p className="text-xs text-zinc-400 mt-1 mb-6">Update name and phone number for {active?.email}.</p>
 
               <form onSubmit={handleEditDetails} className="space-y-4">
                 {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2.5 rounded border border-red-900/50 m-0">{modalError}</p>}
@@ -487,18 +499,27 @@ export default function TutorsPage() {
             </div>
           )}
 
-          {/* Delete Tutor Modal */}
+          {/* Delete Modal */}
           {modalType === 'delete' && (
             <div className="w-full max-w-sm bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
-              <h3 className="text-base font-semibold text-white m-0">Delete Tutor</h3>
-              <p className="text-xs text-zinc-400 mt-1.5 mb-4">
-                This permanently deletes <strong className="text-white font-semibold">{activeTutor?.full_name || activeTutor?.email}</strong> from the platform. Their sign-in, profile, and access are all removed. This action cannot be undone.
+              <h3 className="text-base font-semibold text-white m-0">Delete {entityLabel}</h3>
+              <p className={`text-xs text-zinc-400 mt-1.5 ${hasStudentsCount ? 'mb-4' : 'mb-6'}`}>
+                This permanently deletes <strong className="text-white font-semibold">{active?.full_name || active?.email}</strong> from the platform. Their sign-in, profile, and access are all removed. This action cannot be undone.
               </p>
 
-              {activeTutor?.assigned_students_count > 0 && (
-                <div className="bg-zinc-900 text-zinc-400 rounded-md p-3.5 border border-white/5 text-xs mb-4 leading-normal">
-                  Heads up: this tutor is currently assigned to <strong className="text-white font-semibold">{activeTutor.assigned_students_count} {activeTutor.assigned_students_count === 1 ? 'student' : 'students'}</strong>. Those students will lose their tutor assignment until you reassign them.
-                </div>
+              {hasStudentsCount ? (
+                active?.assigned_students_count > 0 && (
+                  <div className="bg-zinc-900 text-zinc-400 rounded-md p-3.5 border border-white/5 text-xs mb-4 leading-normal">
+                    Heads up: this {entityLower} is currently assigned to <strong className="text-white font-semibold">{active.assigned_students_count} {active.assigned_students_count === 1 ? 'student' : 'students'}</strong>. Those students will lose their {entityLower} assignment until you reassign them.
+                  </div>
+                )
+              ) : (
+                currentUser?.id === active?.id && (
+                  <div className="bg-amber-950/40 text-amber-400 text-xs p-3 rounded-lg border border-amber-900/50 mb-4 flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>You are deleting your own account. If you are the only administrator, this operation will fail.</span>
+                  </div>
+                )
               )}
 
               {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2.5 rounded border border-red-900/50 mb-4">{modalError}</p>}
@@ -572,7 +593,7 @@ export default function TutorsPage() {
             <div className="w-full max-w-sm bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
               <h3 className="text-base font-semibold text-white m-0">Withdraw Invitation</h3>
               <p className="text-xs text-zinc-400 mt-1.5 mb-6">
-                Are you sure you want to withdraw the invitation for <strong className="text-white font-semibold">{activeTutor?.email}</strong>? This email will no longer be whitelisted.
+                Are you sure you want to withdraw the invitation for <strong className="text-white font-semibold">{active?.email}</strong>? This email will no longer be whitelisted.
               </p>
 
               {modalError && <p className="text-xs text-red-400 bg-red-950/40 p-2.5 rounded border border-red-900/50 mb-4">{modalError}</p>}
@@ -604,8 +625,8 @@ export default function TutorsPage() {
       <NewInvitationModal
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
-        initialRole="TUTOR"
-        onSuccess={fetchTutors}
+        initialRole={initialRole}
+        onSuccess={fetchRows}
       />
     </div>
   );

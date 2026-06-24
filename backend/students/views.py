@@ -4,36 +4,16 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 
 from students.models import Student
 from invitations.models import Invitation, InvitationStatusChoices
 from sessions.models import Session, SessionStatusChoices
 from sessions.serializers import SessionSerializer
+from core.permissions import IsStaffUser, IsStudentUser
+from core.querysets import scope_students_by_role
 
 User = get_user_model()
-
-class IsStaffUser(BasePermission):
-    """
-    Allows access only to Admin, Mentor, or Tutor roles, or superusers.
-    """
-    def has_permission(self, request, view):
-        return (
-            request.user 
-            and request.user.is_authenticated 
-            and (request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser)
-        )
-
-class IsStudentUser(BasePermission):
-    """
-    Allows access only to Student role.
-    """
-    def has_permission(self, request, view):
-        return (
-            request.user 
-            and request.user.is_authenticated 
-            and request.user.role == 'STUDENT'
-        )
 
 class StaffDashboardStatsView(APIView):
     """
@@ -45,16 +25,8 @@ class StaffDashboardStatsView(APIView):
     permission_classes = [IsStaffUser]
 
     def get(self, request, *args, **kwargs):
-        role = request.user.role
-        is_mentor = role == 'MENTOR'
-        is_tutor = role == 'TUTOR'
-
-        # Filter students based on role allocation
-        student_qs = Student.objects.all()
-        if is_mentor:
-            student_qs = student_qs.filter(mentor=request.user)
-        elif is_tutor:
-            student_qs = student_qs.filter(tutor=request.user)
+        # Filter students based on role allocation (mentors/tutors see only theirs)
+        student_qs = scope_students_by_role(Student.objects.all(), request.user)
 
         # Base counts
         students_count = student_qs.count()

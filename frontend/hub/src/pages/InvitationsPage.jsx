@@ -5,8 +5,8 @@ import {
   ArrowUpDown, ChevronDown, Trash, Mail
 } from 'lucide-react';
 import api from '../lib/api';
-import NewInvitationModal from './NewInvitationModal';
-import StaffActionsDropdown from './StaffActionsDropdown';
+import NewInvitationModal from '../components/NewInvitationModal';
+import StaffActionsDropdown from '../components/StaffActionsDropdown';
 
 export default function InvitationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Play, FileText, BookOpen, ChevronRight, Folder } from 'lucide-react';
 import { Card } from '../ui/card';
 import { cn } from '../../lib/utils';
+import { formatDate } from '../../lib/formatting';
 
 const TAB_CONFIG = {
   recording: {
@@ -31,15 +32,6 @@ const TAB_CONFIG = {
 };
 
 const TABS = ['recording', 'notes', 'homework'];
-
-function formatDate(iso) {
-  if (!iso) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  }).format(new Date(iso));
-}
 
 export function LibraryTabs({ sessions }) {
   const [active, setActive] = useState('recording');

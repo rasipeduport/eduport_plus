@@ -6,8 +6,8 @@ import {
   Plus, X, ArrowUpDown, ChevronDown, ChevronRight
 } from 'lucide-react';
 import api from '../lib/api';
-import NewInvitationModal from './NewInvitationModal';
-import StaffActionsDropdown from './StaffActionsDropdown';
+import NewInvitationModal from '../components/NewInvitationModal';
+import StaffActionsDropdown from '../components/StaffActionsDropdown';
 
 const MEET_PREFIX = 'https://meet.google.com/';
 

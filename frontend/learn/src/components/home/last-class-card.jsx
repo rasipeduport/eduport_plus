@@ -1,76 +1,18 @@
-import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar, Clock, User, Play, FileText, BookOpen, Star, CheckCircle2 } from 'lucide-react';
 import { Card } from '../ui/card';
-import api from '../../lib/api';
 import { cn } from '../../lib/utils';
-
-function formatSessionDate(startIso, endIso) {
-  if (!startIso || !endIso) return { dateLabel: '', timeLabel: '' };
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const now = new Date();
-
-  const isToday = start.toDateString() === now.toDateString();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const isYesterday = start.toDateString() === yesterday.toDateString();
-
-  let dateLabel;
-  if (isToday) dateLabel = 'Today';
-  else if (isYesterday) dateLabel = 'Yesterday';
-  else
-    dateLabel = new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    }).format(start);
-
-  const timeFmt = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-  const timeLabel = `${timeFmt.format(start)} - ${timeFmt.format(end)}`;
-
-  return { dateLabel, timeLabel };
-}
+import { formatSessionDateTime } from '../../lib/formatting';
+import { useSessionRating } from '../../hooks/useSessionRating';
 
 export function LastClassCard({ session }) {
-  const { dateLabel, timeLabel } = formatSessionDate(
+  const { dateLabel, timeLabel } = formatSessionDateTime(
     session.start_time,
-    session.end_time
+    session.end_time,
+    { relative: 'past' }
   );
 
-  const [isRated, setIsRated] = useState(!!session.rating);
-  const [rating, setRating] = useState(session.rating || 0);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-
-  const handleRate = async (value) => {
-    if (isRated || isSubmitting) return;
-
-    setRating(value);
-    setIsSubmitting(true);
-
-    try {
-      await api.put('/api/sessions/', {
-        id: session.id,
-        rating: value
-      });
-      setIsRated(true);
-      setShowSuccess(true);
-      setTimeout(() => {
-        setShowSuccess(false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to save rating:', err);
-      setRating(0); // reset on error
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const { isRated, rating, hoverRating, setHoverRating, isSubmitting, showSuccess, handleRate } = useSessionRating(session);
 
   const resources = [
     {

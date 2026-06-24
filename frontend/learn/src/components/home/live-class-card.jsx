@@ -1,37 +1,7 @@
 import { CalendarOff, Clock, Link as LinkIcon, User, Video } from 'lucide-react';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
-
-function formatSessionDate(startIso, endIso) {
-  if (!startIso || !endIso) return { dateLabel: '', timeLabel: '' };
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const now = new Date();
-
-  const isToday = start.toDateString() === now.toDateString();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const isTomorrow = start.toDateString() === tomorrow.toDateString();
-
-  let dateLabel;
-  if (isToday) dateLabel = 'Today';
-  else if (isTomorrow) dateLabel = 'Tomorrow';
-  else
-    dateLabel = new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    }).format(start);
-
-  const timeFmt = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-  const timeLabel = `${timeFmt.format(start)} - ${timeFmt.format(end)}`;
-
-  return { dateLabel, timeLabel };
-}
+import { formatSessionDateTime } from '../../lib/formatting';
 
 export function LiveClassCard({ meetLink, nextSession, loading }) {
   if (loading) {
@@ -60,7 +30,7 @@ export function LiveClassCard({ meetLink, nextSession, loading }) {
     );
   }
 
-  const { dateLabel, timeLabel } = formatSessionDate(
+  const { dateLabel, timeLabel } = formatSessionDateTime(
     nextSession.start_time,
     nextSession.end_time
   );
