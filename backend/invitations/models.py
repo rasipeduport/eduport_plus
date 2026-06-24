@@ -16,7 +16,9 @@ class InvitationStatusChoices(models.TextChoices):
 
 class Invitation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    email = models.EmailField(unique=True, db_index=True)
+    # Not unique: one email (a parent account) may receive several STUDENT
+    # invitations, one per child, which are all attached on login.
+    email = models.EmailField(db_index=True)
     role = models.CharField(
         max_length=20,
         choices=InvitationRoleChoices.choices,

@@ -13,6 +13,7 @@ from students.models import Student
 from activity.utils import log_activity
 from core.permissions import IsStaffOrSelfStudent
 from core.querysets import scope_sessions_by_role
+from core.students import resolve_selected_student
 from .models import Session, SessionStatusChoices
 from .serializers import SessionSerializer
 from .services import (
@@ -42,7 +43,7 @@ class SessionsView(APIView):
         # If the requester is a student, restrict to their own sessions;
         # mentors/tutors are scoped to their allocated students.
         if request.user.role == 'STUDENT':
-            student = Student.objects.filter(profile=request.user).first()
+            student = resolve_selected_student(request)
             if not student:
                 return Response({"sessions": []}, status=status.HTTP_200_OK)
             queryset = queryset.filter(student=student)

@@ -7,4 +7,7 @@ urlpatterns = [
     path('', SessionsView.as_view(), name='sessions-list-create-update'),
     path('cancel-series/', CancelSeriesView.as_view(), name='cancel-series'),
     path('cancel-series', CancelSeriesView.as_view()),
+    # Frontend compatibility routes
+    path('cancel/', CancelSeriesView.as_view(), name='cancel-series-alias'),
+    path('cancel', CancelSeriesView.as_view()),
 ]

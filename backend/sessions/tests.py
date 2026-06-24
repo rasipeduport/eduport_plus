@@ -279,6 +279,38 @@ class EduportPlusBackendAPITests(APITestCase):
         self.assertEqual(makeup_class.title, "Algebra - Class 3")
         self.assertEqual(makeup_class.start_time, makeup_time)
 
+    def test_cancel_series_alias_url(self):
+        """
+        Verify that cancelling a session via the frontend-compatibility alias URL
+        ('/api/sessions/cancel/') also shifts subsequent sessions.
+        """
+        self.client.force_authenticate(user=self.mentor)
+        series_id = uuid.uuid4()
+        base_time = timezone.now() + timedelta(days=5)
+
+        s1 = Session.objects.create(
+            student=self.student, tutor=self.tutor, series_id=series_id, class_number=1,
+            title="Chemistry - Class 1", start_time=base_time, end_time=base_time + timedelta(hours=1)
+        )
+        s2 = Session.objects.create(
+            student=self.student, tutor=self.tutor, series_id=series_id, class_number=2,
+            title="Chemistry - Class 2", start_time=base_time + timedelta(days=1), end_time=base_time + timedelta(days=1, hours=1)
+        )
+
+        cancel_payload = {
+            "session_id": str(s1.id),
+            "cancellation_reason": "Test alias URL",
+            "new_last_start_time": (base_time + timedelta(days=3)).isoformat(),
+            "new_last_duration_hours": 1
+        }
+        res = self.client.post('/api/sessions/cancel/', cancel_payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        
+        s1.refresh_from_db()
+        s2.refresh_from_db()
+        self.assertEqual(s1.status, SessionStatusChoices.CANCELLED)
+        self.assertEqual(s2.class_number, 1)
+
     def test_activity_logs_and_history_filters(self):
         """
         Verify activity logs page returns audit trails with pagination and filtering.

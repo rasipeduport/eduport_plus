@@ -4,6 +4,7 @@ import StudentProvider from './context/StudentProvider';
 import { AppShell } from './components/student/app-shell';
 import LoginPage from './pages/LoginPage';
 import WaitingRoomPage from './pages/WaitingRoomPage';
+import SelectProfilePage from './pages/SelectProfilePage';
 import DashboardPage from './pages/DashboardPage';
 import SessionsPage from './pages/SessionsPage';
 import LibraryPage from './pages/LibraryPage';
@@ -19,12 +20,14 @@ export default function App() {
           path="/*"
           element={
             <AuthProvider>
-              {({ user, studentProfile, stats, reloadStats, logout }) => (
+              {({ user, students, studentProfile, stats, reloadStats, switchStudent, logout }) => (
                 <StudentProvider
                   user={user}
+                  students={students}
                   studentProfile={studentProfile}
                   stats={stats}
                   reloadStats={reloadStats}
+                  switchStudent={switchStudent}
                   logout={logout}
                 >
                   <Routes>
@@ -32,6 +35,7 @@ export default function App() {
                     <Route path="/sessions" element={<AppShell><SessionsPage /></AppShell>} />
                     <Route path="/library" element={<AppShell><LibraryPage /></AppShell>} />
                     <Route path="/profile" element={<AppShell><ProfilePage /></AppShell>} />
+                    <Route path="/select-profile" element={<SelectProfilePage />} />
                     <Route path="/waiting-room" element={<WaitingRoomPage />} />
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />
                   </Routes>

@@ -37,26 +37,114 @@ def parse_admission_date(date_str):
 
 class UserProvisioningService:
     @staticmethod
+    def _create_student_from_invitation(user: User, invitation: Invitation, google_name: str) -> Student:
+        """
+        Create a single Student row from a STUDENT invitation's extra_data and
+        link it to ``user``. Marks the invitation ACCEPTED. Raises ValueError if
+        the invitation is missing a student_code.
+        """
+        extra_data = invitation.extra_data or {}
+
+        student_code = extra_data.get("student_code")
+        if not student_code:
+            logger.error(f"Student invitation for {invitation.email} is missing student_code in extra_data.")
+            raise ValueError("Student code is missing from the invitation data.")
+
+        fullname = extra_data.get("full_name") or google_name or invitation.email.split("@")[0]
+        admission_date = parse_admission_date(extra_data.get("admission_date"))
+
+        # Resolve Mentor and Tutor if IDs are provided
+        mentor = None
+        mentor_id = extra_data.get("mentor_id")
+        if mentor_id:
+            try:
+                mentor = User.objects.get(id=mentor_id)
+            except User.DoesNotExist:
+                logger.warning(f"Mentor with ID {mentor_id} not found during student registration.")
+
+        tutor = None
+        tutor_id = extra_data.get("tutor_id")
+        if tutor_id:
+            try:
+                tutor = User.objects.get(id=tutor_id)
+            except User.DoesNotExist:
+                logger.warning(f"Tutor with ID {tutor_id} not found during student registration.")
+
+        student = Student.objects.create(
+            profile=user,
+            student_code=student_code,
+            full_name=fullname,
+            mobile_number=extra_data.get("mobile_number"),
+            country=extra_data.get("country"),
+            state=extra_data.get("state"),
+            school_name=extra_data.get("school_name"),
+            grade=extra_data.get("grade"),
+            syllabus=extra_data.get("syllabus"),
+            admission_date=admission_date,
+            total_class_quota=extra_data.get("total_class_quota", 0),
+            mentor=mentor,
+            tutor=tutor,
+            meet_link=extra_data.get("meet_link", ""),
+            status=StatusChoices.ACTIVE
+        )
+
+        invitation.status = InvitationStatusChoices.ACCEPTED
+        invitation.save(update_fields=['status', 'updated_at'])
+
+        logger.info(f"Student record created for user {user.email} with code {student_code}")
+        return student
+
+    @staticmethod
+    @transaction.atomic
+    def attach_pending_students(user: User, google_name: str = "") -> list:
+        """
+        Attach every PENDING STUDENT invitation for ``user.email`` as a new
+        Student row (one parent account -> many children). Idempotent: an
+        invitation whose student_code already exists for this account is simply
+        marked ACCEPTED and skipped. Returns the list of newly created students.
+
+        Called on first login (after the account is created) and on every
+        subsequent login, so children invited later are picked up automatically.
+        """
+        created = []
+        pending = Invitation.objects.filter(
+            email=user.email,
+            role=InvitationRoleChoices.STUDENT,
+            status=InvitationStatusChoices.PENDING,
+        )
+        for invitation in pending:
+            code = (invitation.extra_data or {}).get("student_code")
+            if code and Student.objects.filter(profile=user, student_code=code).exists():
+                invitation.status = InvitationStatusChoices.ACCEPTED
+                invitation.save(update_fields=['status', 'updated_at'])
+                continue
+            created.append(
+                UserProvisioningService._create_student_from_invitation(user, invitation, google_name)
+            )
+        return created
+
+    @staticmethod
     @transaction.atomic
     def provision_user(email: str, google_name: str, google_avatar: str) -> User:
         """
-        Provisions a User and matching Student record if role is STUDENT,
+        Provisions a User on first login from their PENDING invitation, and
+        attaches all of their PENDING student invitations (for STUDENT accounts),
         inside an atomic database transaction.
         """
         logger.info(f"Attempting to provision user profile for email: {email}")
 
-        # 1. Fetch PENDING invitation
+        # 1. Fetch PENDING invitation (used to determine the account's role)
         invitation = Invitation.objects.filter(
-            email=email, 
+            email=email,
             status=InvitationStatusChoices.PENDING
         ).first()
-        
+
         if not invitation:
             logger.error(f"No pending invitation found for email {email}")
             raise ValueError("No pending invitation found for this email address.")
 
         extra_data = invitation.extra_data or {}
-        
+
         # Determine name to use (Google name prioritized, fallback to sheet name)
         fullname = google_name or extra_data.get("full_name") or invitation.email.split("@")[0]
 
@@ -75,60 +163,16 @@ class UserProvisioningService:
 
         student = None
 
-        # 3. Create Student record if role is STUDENT
         if invitation.role == InvitationRoleChoices.STUDENT:
-            student_code = extra_data.get("student_code")
-            if not student_code:
-                # Fallback if student_code was somehow not mapped in extra_data
-                logger.error(f"Student invitation for {email} is missing student_code in extra_data.")
-                raise ValueError("Student code is missing from the invitation data.")
-                
-            admission_date_raw = extra_data.get("admission_date")
-            admission_date = parse_admission_date(admission_date_raw)
+            # 3. Attach all pending student invitations for this account
+            created = UserProvisioningService.attach_pending_students(user, google_name)
+            student = created[0] if created else None
+        else:
+            # Non-student account: a single invitation onboards a single staff user
+            invitation.status = InvitationStatusChoices.ACCEPTED
+            invitation.save(update_fields=['status', 'updated_at'])
 
-            # Resolve Mentor and Tutor if IDs are provided
-            mentor_id = extra_data.get("mentor_id")
-            mentor = None
-            if mentor_id:
-                try:
-                    mentor = User.objects.get(id=mentor_id)
-                except User.DoesNotExist:
-                    logger.warning(f"Mentor with ID {mentor_id} not found during student registration.")
-
-            tutor_id = extra_data.get("tutor_id")
-            tutor = None
-            if tutor_id:
-                try:
-                    tutor = User.objects.get(id=tutor_id)
-                except User.DoesNotExist:
-                    logger.warning(f"Tutor with ID {tutor_id} not found during student registration.")
-
-            meet_link = extra_data.get("meet_link", "")
-
-            student = Student.objects.create(
-                profile=user,
-                student_code=student_code,
-                full_name=fullname,
-                mobile_number=extra_data.get("mobile_number"),
-                country=extra_data.get("country"),
-                state=extra_data.get("state"),
-                school_name=extra_data.get("school_name"),
-                grade=extra_data.get("grade"),
-                syllabus=extra_data.get("syllabus"),
-                admission_date=admission_date,
-                total_class_quota=extra_data.get("total_class_quota", 0),
-                mentor=mentor,
-                tutor=tutor,
-                meet_link=meet_link,
-                status=StatusChoices.ACTIVE
-            )
-            logger.info(f"Student record created for user {email} with code {student_code}")
-
-        # 4. Mark Invitation as ACCEPTED
-        invitation.status = InvitationStatusChoices.ACCEPTED
-        invitation.save()
-
-        # 5. Log Activity
+        # 4. Log Activity
         ActivityLog.objects.create(
             actor=user,
             actor_email=user.email,

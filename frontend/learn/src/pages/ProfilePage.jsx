@@ -1,11 +1,13 @@
-import { LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { LogOut, Users } from 'lucide-react';
 import { useStudent } from '../components/student/student-context';
 import { ProfileHeader } from '../components/profile/profile-header';
 import { StudentInfoCard } from '../components/profile/student-info-card';
 import { MentorCard } from '../components/profile/mentor-card';
 
 export default function ProfilePage() {
-  const { selectedStudent, user, dashboardStats, logout } = useStudent();
+  const { selectedStudent, students, user, dashboardStats, logout } = useStudent();
+  const navigate = useNavigate();
 
   if (!selectedStudent) return null;
 
@@ -37,6 +39,15 @@ export default function ProfilePage() {
 
       {/* Log out actions */}
       <div className="space-y-3 pb-4">
+        {students?.length > 1 && (
+          <button
+            onClick={() => navigate('/select-profile')}
+            className="border-border bg-surface-elevated text-text-secondary hover:bg-surface-muted hover:text-text-primary flex h-11 w-full items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition-colors duration-150 cursor-pointer"
+          >
+            <Users className="h-4 w-4" />
+            Switch Student
+          </button>
+        )}
         <button
           onClick={logout}
           className="border-border bg-surface-elevated text-text-secondary hover:bg-surface-muted hover:text-text-primary flex h-11 w-full items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition-colors duration-150 cursor-pointer"

@@ -10,10 +10,10 @@ class StatusChoices(models.TextChoices):
 
 class Student(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    profile = models.OneToOneField(
+    profile = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='student_profile'
+        related_name='students'
     )
     student_code = models.CharField(max_length=50, unique=True, db_index=True)
     full_name = models.CharField(max_length=255)

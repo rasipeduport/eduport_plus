@@ -14,11 +14,30 @@ from google.auth.transport import requests as google_requests
 from students.models import Student
 from activity.models import ActivityLog
 from core.authentication import CSRFExemptSessionAuthentication
+from core.students import get_account_students, resolve_selected_student, EP_STUDENT_COOKIE
 from .serializers import UserSerializer, StudentSerializer
 from .services import UserProvisioningService
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+# One year, in seconds; the selected-student cookie is a long-lived preference.
+EP_STUDENT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+
+
+def build_student_payload(request, user):
+    """
+    Build the student portion of an auth response for a STUDENT account:
+    the full list of children, the currently selected child (resolved from the
+    ``ep-student-id`` cookie), and that child's id.
+    """
+    students = list(get_account_students(user))
+    selected = resolve_selected_student(request)
+    return {
+        "student_profiles": StudentSerializer(students, many=True).data,
+        "student_profile": StudentSerializer(selected).data if selected else None,
+        "selected_student_id": str(selected.id) if selected else None,
+    }
 
 def verify_google_token(token: str) -> dict:
     """
@@ -128,6 +147,14 @@ class GoogleLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        # For existing student accounts, attach any children invited since their
+        # last login (new students provisioned above already have theirs).
+        if not is_new_user and user.role == 'STUDENT':
+            try:
+                UserProvisioningService.attach_pending_students(user, name)
+            except ValueError as e:
+                logger.warning(f"Could not attach pending students for {email}: {e}")
+
         # Log session in Django
         login(request, user)
 
@@ -161,10 +188,7 @@ class GoogleLoginView(APIView):
 
         # Include Student specific info if applicable
         if user.role == 'STUDENT':
-            student = Student.objects.filter(profile=user).first()
-            if student:
-                student_serializer = StudentSerializer(student)
-                response_data["student_profile"] = student_serializer.data
+            response_data.update(build_student_payload(request, user))
 
         return Response(
             response_data,
@@ -197,10 +221,12 @@ class LogoutView(APIView):
         )
 
         logout(request)
-        return Response(
+        response = Response(
             {"status": "logged_out", "message": "Successfully logged out."},
             status=status.HTTP_200_OK
         )
+        response.delete_cookie(EP_STUDENT_COOKIE, domain=settings.SESSION_COOKIE_DOMAIN)
+        return response
 
 class MeView(APIView):
     """
@@ -216,12 +242,49 @@ class MeView(APIView):
         }
 
         if user.role == 'STUDENT':
-            student = Student.objects.filter(profile=user).first()
-            if student:
-                student_serializer = StudentSerializer(student)
-                response_data["student_profile"] = student_serializer.data
+            response_data.update(build_student_payload(request, user))
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class SelectStudentView(APIView):
+    """
+    POST /api/auth/select-student/
+    Record which child a parent account is acting on by setting the
+    ``ep-student-id`` cookie. Validates that the student belongs to the account.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CSRFExemptSessionAuthentication]
+
+    def post(self, request, *args, **kwargs):
+        student_id = request.data.get("student_id")
+        if not student_id:
+            return Response(
+                {"error": "INVALID_INPUT", "message": "student_id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        student = get_account_students(request.user).filter(id=student_id).first()
+        if not student:
+            return Response(
+                {"error": "NOT_FOUND", "message": "That student is not linked to your account."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        response = Response(
+            {"selected_student_id": str(student.id), "student_profile": StudentSerializer(student).data},
+            status=status.HTTP_200_OK
+        )
+        response.set_cookie(
+            EP_STUDENT_COOKIE,
+            str(student.id),
+            max_age=EP_STUDENT_COOKIE_MAX_AGE,
+            domain=settings.SESSION_COOKIE_DOMAIN,
+            secure=settings.SESSION_COOKIE_SECURE,
+            httponly=True,
+            samesite=settings.SESSION_COOKIE_SAMESITE,
+        )
+        return response
 
 class BaseRoleListView(APIView):
     """

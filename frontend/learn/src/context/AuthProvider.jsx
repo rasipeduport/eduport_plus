@@ -13,6 +13,7 @@ const HUB_URL = import.meta.env.VITE_HUB_URL || 'http://localhost:3000';
  */
 export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [students, setStudents] = useState([]);
   const [studentProfile, setStudentProfile] = useState(null);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,7 +22,7 @@ export default function AuthProvider({ children }) {
 
   const fetchUserAndStats = async () => {
     try {
-      // 1. Fetch current user from session /me/
+      // 1. Fetch current user + linked students from session /me/
       const meResponse = await api.get('/api/auth/me/');
       const userData = meResponse.data.user;
       setUser(userData);
@@ -32,29 +33,49 @@ export default function AuthProvider({ children }) {
         return;
       }
 
-      const profileData = meResponse.data.student_profile;
-      setStudentProfile(profileData);
+      const profiles = meResponse.data.student_profiles || [];
+      const selected = meResponse.data.student_profile || null;
+      setStudents(profiles);
+      setStudentProfile(selected);
 
-      // 2. Fetch student dashboard stats
+      // No students linked yet -> waiting room
+      if (profiles.length === 0) {
+        setStats(null);
+        if (location.pathname !== '/waiting-room') navigate('/waiting-room');
+        return;
+      }
+
+      // Several students linked but none chosen -> let the parent pick one
+      if (!selected) {
+        setStats(null);
+        if (location.pathname !== '/select-profile') navigate('/select-profile');
+        return;
+      }
+
+      // 2. A student is selected -> fetch their dashboard stats
       try {
         const statsResponse = await api.get('/api/student/dashboard/');
         setStats(statsResponse.data);
 
-        // Redirect if in waiting room or login but verified
-        if (location.pathname === '/waiting-room' || location.pathname === '/login') {
+        // Redirect into the app if currently on a gateway route. Note:
+        // /select-profile is intentionally excluded so a parent who already
+        // has a child selected can still open it to switch students.
+        if (['/waiting-room', '/login'].includes(location.pathname)) {
           navigate('/dashboard');
         }
       } catch (err) {
-        if (err.response?.data?.error === 'STUDENT_PROFILE_NOT_FOUND') {
-          if (location.pathname !== '/waiting-room') {
-            navigate('/waiting-room');
-          }
+        const code = err.response?.data?.error;
+        if (code === 'STUDENT_PROFILE_NOT_FOUND') {
+          if (location.pathname !== '/waiting-room') navigate('/waiting-room');
+        } else if (code === 'STUDENT_NOT_SELECTED') {
+          if (location.pathname !== '/select-profile') navigate('/select-profile');
         } else {
           console.error('Failed to load dashboard stats', err);
         }
       }
     } catch (error) {
       setUser(null);
+      setStudents([]);
       setStudentProfile(null);
       setStats(null);
       if (location.pathname !== '/login') {
@@ -74,6 +95,13 @@ export default function AuthProvider({ children }) {
     }
   };
 
+  // Switch the active child: persist the choice server-side, then re-resolve.
+  const switchStudent = async (studentId) => {
+    await api.post('/api/auth/select-student/', { student_id: studentId });
+    await fetchUserAndStats();
+    navigate('/dashboard');
+  };
+
   useEffect(() => {
     fetchUserAndStats();
   }, [location.pathname]);
@@ -82,6 +110,7 @@ export default function AuthProvider({ children }) {
     try {
       await api.post('/api/auth/logout/');
       setUser(null);
+      setStudents([]);
       setStudentProfile(null);
       setStats(null);
       navigate('/login');
@@ -101,5 +130,5 @@ export default function AuthProvider({ children }) {
     );
   }
 
-  return children({ user, studentProfile, stats, reloadStats, logout });
+  return children({ user, students, studentProfile, stats, reloadStats, switchStudent, logout });
 }

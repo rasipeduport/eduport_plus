@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import GoogleLoginView, LogoutView, MeView
+from .views import GoogleLoginView, LogoutView, MeView, SelectStudentView
 
 app_name = 'accounts'
 
@@ -7,4 +7,6 @@ urlpatterns = [
     path('google/', GoogleLoginView.as_view(), name='google-login'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('me/', MeView.as_view(), name='me'),
+    path('select-student/', SelectStudentView.as_view(), name='select-student'),
+    path('select-student', SelectStudentView.as_view()),
 ]
