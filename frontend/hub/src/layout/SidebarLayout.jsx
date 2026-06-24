@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, GraduationCap, Compass, Presentation, Mail, LogOut, ShieldCheck, ChevronsUpDown, Sun, Moon, Monitor } from 'lucide-react';
+import { LayoutDashboard, GraduationCap, Compass, Presentation, Mail, LogOut, ShieldCheck, ChevronsUpDown, Sun, Moon, Monitor, History } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 
 // Protected Layout with Sidebar
@@ -18,6 +18,7 @@ export default function SidebarLayout({ user, logout, children }) {
     { title: 'Mentors', path: '/mentors', icon: Compass },
     { title: 'Tutors', path: '/tutors', icon: Presentation },
     { title: 'Invitations', path: '/invitations', icon: Mail },
+    { title: 'Activity', path: '/activity', icon: History },
   ];
 
   useEffect(() => {
@@ -50,7 +51,7 @@ export default function SidebarLayout({ user, logout, children }) {
           {menuItems
             .filter((item) => {
               if (user?.role === 'TUTOR' || user?.role === 'MENTOR') {
-                return ['/dashboard', '/students', '/sessions'].includes(item.path);
+                return ['/dashboard', '/students', '/sessions', '/activity'].includes(item.path);
               }
               return true; // ADMIN see all
             })
@@ -200,7 +201,9 @@ export default function SidebarLayout({ user, logout, children }) {
                       ? 'Mentors'
                       : location.pathname === '/tutors'
                         ? 'Tutors'
-                        : 'Invitations'}
+                        : location.pathname === '/invitations'
+                          ? 'Invitations'
+                          : 'Activity'}
           </h2>
         </header>
         <main className="flex-1 overflow-y-auto p-6 bg-zinc-50 dark:bg-[#050505] transition-colors duration-200">{children}</main>

@@ -6,6 +6,7 @@ from django.db import transaction
 from django.contrib.auth import get_user_model
 from core.authentication import CSRFExemptSessionAuthentication
 from core.permissions import IsAdminOrMentor
+from activity.utils import log_activity
 from .models import Invitation, InvitationStatusChoices, InvitationRoleChoices
 from .sheets import GoogleSheetsService
 
@@ -254,6 +255,15 @@ class CreateInvitationView(APIView):
                 import logging
                 logging.getLogger(__name__).error(f"Failed to send invitation email to {email}: {e}")
 
+            log_activity(
+                action='invitation.create',
+                entity_type='invitation',
+                entity_id=str(invitation.id),
+                entity_label=invitation.email,
+                context={"role": invitation.role},
+                request=request,
+            )
+
             return Response(
                 {
                     "status": status_str,
@@ -323,6 +333,15 @@ class CreateInvitationView(APIView):
             import logging
             logging.getLogger(__name__).error(f"Failed to send invitation email to {new_email}: {e}")
 
+        log_activity(
+            action='invitation.update_email',
+            entity_type='invitation',
+            entity_id=str(invitation.id),
+            entity_label=new_email,
+            changes={"email": {"old": old_email, "new": new_email}},
+            request=request,
+        )
+
         return Response({
             "status": "updated",
             "message": f"Invitation email updated from {old_email} to {new_email}."
@@ -356,7 +375,18 @@ class CreateInvitationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        invitation_id = str(invitation.id)
+        invitation_email = invitation.email
         invitation.delete()
+
+        log_activity(
+            action='invitation.withdraw',
+            entity_type='invitation',
+            entity_id=invitation_id,
+            entity_label=invitation_email,
+            request=request,
+        )
+
         return Response({
             "status": "deleted",
             "message": f"Invitation for {email} has been withdrawn."

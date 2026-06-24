@@ -10,6 +10,7 @@ from students.models import Student
 from invitations.models import Invitation, InvitationStatusChoices
 from sessions.models import Session, SessionStatusChoices
 from sessions.serializers import SessionSerializer
+from activity.utils import log_activity
 from core.permissions import IsStaffUser, IsStudentUser
 from core.querysets import scope_students_by_role
 
@@ -215,10 +216,15 @@ class StudentListView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
             
+        # Capture before-state for activity logging
+        before_meet_link = student.meet_link
+        before_quota = student.total_class_quota
+        before_status = student.status
+
         # Update fields if present in request.data
         if "meet_link" in request.data:
             student.meet_link = request.data.get("meet_link")
-            
+
         if "total_class_quota" in request.data:
             try:
                 quota = int(request.data.get("total_class_quota"))
@@ -228,7 +234,8 @@ class StudentListView(APIView):
                     {"error": "INVALID_INPUT", "message": "total_class_quota must be an integer."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
+        new_status = None
         if "status" in request.data:
             new_status = request.data.get("status").upper()
             if new_status not in ('ACTIVE', 'INACTIVE', 'EXPIRED'):
@@ -237,11 +244,49 @@ class StudentListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             student.status = new_status
-            
+
         if "status_note" in request.data:
             student.status_note = request.data.get("status_note")
-            
+
         student.save()
+
+        # Activity logging (best-effort) — one entry per kind of change
+        if "meet_link" in request.data and student.meet_link != before_meet_link:
+            log_activity(
+                action='student.update_meet_link',
+                entity_type='student',
+                entity_id=str(student.id),
+                entity_label=student.full_name,
+                student=student,
+                changes={"meet_link": {"old": before_meet_link or "", "new": student.meet_link or ""}},
+                request=request,
+            )
+
+        if "total_class_quota" in request.data and student.total_class_quota != before_quota:
+            log_activity(
+                action='student.update_quota',
+                entity_type='student',
+                entity_id=str(student.id),
+                entity_label=student.full_name,
+                student=student,
+                changes={"total_class_quota": {"old": before_quota, "new": student.total_class_quota}},
+                request=request,
+            )
+
+        if new_status and new_status != before_status:
+            log_activity(
+                action='student.update_status',
+                entity_type='student',
+                entity_id=str(student.id),
+                entity_label=student.full_name,
+                student=student,
+                changes={
+                    "status": {"old": before_status.lower(), "new": student.status.lower()},
+                    "status_note": {"new": student.status_note or ""},
+                },
+                request=request,
+            )
+
         return Response({
             "status": "updated",
             "message": "Student updated successfully."

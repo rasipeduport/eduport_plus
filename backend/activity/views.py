@@ -33,8 +33,10 @@ class ActivityLogPermission(BasePermission):
                     return Student.objects.filter(id=student_id, tutor=request.user).exists()
                 return True
             return False
-        
-        return request.user.role == 'ADMIN' or request.user.is_superuser
+
+        # Global audit log: admins see everything; mentors/tutors are allowed
+        # but their results are scoped to their own students in the view.
+        return request.user.role in ('ADMIN', 'MENTOR', 'TUTOR') or request.user.is_superuser
 
 class ActivityLogListView(APIView):
     """
@@ -49,6 +51,14 @@ class ActivityLogListView(APIView):
         
         # Base query
         queryset = ActivityLog.objects.all().order_by('-created_at')
+
+        # Scope non-admin staff to their own students' activity plus their own actions
+        user = request.user
+        if not (user.role == 'ADMIN' or user.is_superuser):
+            if user.role == 'MENTOR':
+                queryset = queryset.filter(Q(student__mentor=user) | Q(actor=user))
+            elif user.role == 'TUTOR':
+                queryset = queryset.filter(Q(student__tutor=user) | Q(actor=user))
 
         # Filters
         student_id = params.get('student_id')
