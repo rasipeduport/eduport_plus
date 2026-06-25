@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { Loader2, Search, ChevronDown, Calendar } from 'lucide-react';
+import { Loader2, Search, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import api from '../lib/api';
 
 const PAGE_SIZE = 25;
@@ -374,9 +374,9 @@ export default function ActivityPage() {
                       </td>
                       <td className="py-3 px-2 align-top text-right">
                         {hasChanges && (
-                          <ChevronDown
-                            className={`w-4 h-4 text-zinc-500 inline-block transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                          />
+                          isExpanded
+                            ? <ChevronUp className="w-4 h-4 text-zinc-400 inline-block" />
+                            : <ChevronDown className="w-4 h-4 text-zinc-500 inline-block" />
                         )}
                       </td>
                     </tr>
