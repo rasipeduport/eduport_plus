@@ -61,7 +61,8 @@ def verify_google_token(token: str) -> dict:
         id_info = id_token.verify_oauth2_token(
             token,
             google_requests.Request(),
-            client_id
+            client_id,
+            clock_skew_in_seconds=10
         )
         return {
             "email": id_info.get("email"),

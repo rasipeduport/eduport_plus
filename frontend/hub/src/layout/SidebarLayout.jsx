@@ -32,9 +32,9 @@ export default function SidebarLayout({ user, logout, children }) {
   }, []);
 
   return (
-    <div className="min-h-screen flex bg-zinc-50 dark:bg-[#050505] text-zinc-900 dark:text-[#ffffff] font-sans antialiased transition-colors duration-200">
+    <div className="h-screen overflow-hidden flex bg-zinc-50 dark:bg-[#050505] text-zinc-900 dark:text-[#ffffff] font-sans antialiased transition-colors duration-200">
       {/* Sidebar */}
-      <aside className="w-64 bg-white dark:bg-[#0a0a0a] border-r border-zinc-200 dark:border-[rgba(255,255,255,0.08)] flex flex-col shrink-0 transition-colors duration-200">
+      <aside className="w-64 h-screen bg-white dark:bg-[#0a0a0a] border-r border-zinc-200 dark:border-[rgba(255,255,255,0.08)] flex flex-col shrink-0 transition-colors duration-200">
         {/* Brand */}
         <div className="h-16 flex items-center gap-2 px-4 border-b border-zinc-200 dark:border-[rgba(255,255,255,0.08)] bg-white dark:bg-[#0a0a0a] box-border transition-colors duration-200">
           <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-[rgba(255,255,255,0.03)] flex items-center justify-center shrink-0 border border-zinc-200/50 dark:border-transparent">
